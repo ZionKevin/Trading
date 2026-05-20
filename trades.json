@@ -1,26 +1,26 @@
 [
   {
     "id": 1,
-    "signal": "BUY_PIVOT_S1_BOUNCE",
+    "signal": "BUY_TEST",
     "entry_price": 4550.0,
-    "entry_time": "2026-05-20T13:06:49.992329",
+    "entry_time": "2026-05-20T13:12:57.671720",
     "lot": 0.2,
-    "exit_price": 4560.0,
-    "exit_time": "2026-05-20T13:06:50.005715",
-    "pnl": 2000.0,
-    "pnl_pips": 1000.0,
+    "exit_price": 4660.0,
+    "exit_time": "2026-05-20T13:12:57.678959",
+    "pnl": 220.0,
+    "pnl_pips": 110.0,
     "status": "CLOSED"
   },
   {
     "id": 2,
-    "signal": "SELL_RESISTANCE_BREAK",
-    "entry_price": 4560.0,
-    "entry_time": "2026-05-20T13:06:49.998033",
+    "signal": "BUY_TEST2",
+    "entry_price": 4650.0,
+    "entry_time": "2026-05-20T13:12:57.684303",
     "lot": 0.2,
-    "exit_price": null,
-    "exit_time": null,
-    "pnl": null,
-    "pnl_pips": null,
-    "status": "OPEN"
+    "exit_price": 4660.0,
+    "exit_time": "2026-05-20T13:12:57.693942",
+    "pnl": 20.0,
+    "pnl_pips": 10.0,
+    "status": "CLOSED"
   }
 ]

@@ -180,22 +180,30 @@ async def handle_command(chat_id, text):
                 await send_reply(chat_id, "Format: /enter BUY_PIVOT_S1_BOUNCE 4550.00")
         elif "/close" in cmd:
             logger.info(f"/close from {chat_id}")
-            # Format: /close TRADE_ID EXIT_PRICE
+            # Format: /close EXIT_PRICE (auto-close last open trade)
             parts = text.split()
-            if len(parts) >= 3:
+            if len(parts) >= 2:
                 try:
-                    trade_id = int(parts[1])
-                    exit_price = float(parts[2])
-                    trade = close_trade(trade_id, exit_price)
-                    if trade:
-                        reply = f"TRADE CLOSED\nID: {trade['id']}\nExit: {exit_price:.2f}\nP&L: ${trade['pnl']:.2f}"
-                        await send_reply(chat_id, reply)
+                    exit_price = float(parts[1])
+
+                    # Find last open trade
+                    trades = load_trades()
+                    open_trades = [t for t in trades if t['status'] == 'OPEN']
+
+                    if open_trades:
+                        trade_id = open_trades[-1]['id']  # Last open trade
+                        trade = close_trade(trade_id, exit_price)
+                        if trade:
+                            reply = f"TRADE CLOSED\nID: {trade['id']}\nEntry: {trade['entry_price']:.2f}\nExit: {exit_price:.2f}\nP&L: ${trade['pnl']:.2f}"
+                            await send_reply(chat_id, reply)
+                        else:
+                            await send_reply(chat_id, "Error closing trade")
                     else:
-                        await send_reply(chat_id, f"Trade {trade_id} not found")
+                        await send_reply(chat_id, "No open trades")
                 except ValueError:
-                    await send_reply(chat_id, "Invalid format. Use: /close TRADE_ID EXIT_PRICE")
+                    await send_reply(chat_id, "Invalid price. Use: /close 4660.00")
             else:
-                await send_reply(chat_id, "Format: /close 1 4560.00")
+                await send_reply(chat_id, "Format: /close 4660.00")
         elif "/stats" in cmd:
             logger.info(f"/stats from {chat_id}")
             reply = format_stats()

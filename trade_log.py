@@ -70,12 +70,12 @@ def close_trade(trade_id, exit_price):
             trade['exit_time'] = datetime.now().isoformat()
             trade['status'] = 'CLOSED'
 
-            # Calculate P&L in pips
-            pips = (exit_price - trade['entry_price']) * 100
-            # Assume 1 pip = 0.01 per 0.1 lot, scale by lot size
-            pnl_per_pip = trade['lot'] * 10  # XAU: $10 per pip per 0.1 lot
+            # Calculate P&L
+            # For XAU: P&L = (exit - entry) * $10 * lot
+            # Example: 100 pips (100 price units) * 0.2 lot = 100 * 10 * 0.2 = $200
+            pips = exit_price - trade['entry_price']
             trade['pnl_pips'] = pips
-            trade['pnl'] = pips * pnl_per_pip
+            trade['pnl'] = pips * 10 * trade['lot']
 
             save_trades(trades)
             return trade

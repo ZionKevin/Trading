@@ -11,6 +11,7 @@ from market_status import market_overview
 from scalp_check import check_h1_trend, check_m5_scalp, check_m15_scalp, find_scalp_entry
 from fetch import fetch_symbol
 from indicators import IndicatorSet
+from trade_log import log_entry, close_trade, format_stats, list_trades, load_trades
 from datetime import datetime, timedelta
 
 logging.basicConfig(
@@ -142,9 +143,50 @@ async def handle_command(chat_id, text):
             logger.info(f"/m15 from {chat_id}")
             reply = check_m15_scalp()
             await send_reply(chat_id, reply)
+        elif "/enter" in cmd:
+            logger.info(f"/enter from {chat_id}")
+            # Format: /enter SIGNAL_NAME ENTRY_PRICE
+            parts = text.split()
+            if len(parts) >= 3:
+                signal = parts[1]
+                try:
+                    entry_price = float(parts[2])
+                    trade = log_entry(signal, entry_price)
+                    reply = f"TRADE OPENED\nID: {trade['id']}\nSignal: {signal}\nEntry: {entry_price:.2f}"
+                    await send_reply(chat_id, reply)
+                except ValueError:
+                    await send_reply(chat_id, "Invalid price. Format: /enter SIGNAL_NAME PRICE")
+            else:
+                await send_reply(chat_id, "Format: /enter BUY_PIVOT_S1_BOUNCE 4550.00")
+        elif "/close" in cmd:
+            logger.info(f"/close from {chat_id}")
+            # Format: /close TRADE_ID EXIT_PRICE
+            parts = text.split()
+            if len(parts) >= 3:
+                try:
+                    trade_id = int(parts[1])
+                    exit_price = float(parts[2])
+                    trade = close_trade(trade_id, exit_price)
+                    if trade:
+                        reply = f"TRADE CLOSED\nID: {trade['id']}\nExit: {exit_price:.2f}\nP&L: ${trade['pnl']:.2f}"
+                        await send_reply(chat_id, reply)
+                    else:
+                        await send_reply(chat_id, f"Trade {trade_id} not found")
+                except ValueError:
+                    await send_reply(chat_id, "Invalid format. Use: /close TRADE_ID EXIT_PRICE")
+            else:
+                await send_reply(chat_id, "Format: /close 1 4560.00")
+        elif "/stats" in cmd:
+            logger.info(f"/stats from {chat_id}")
+            reply = format_stats()
+            await send_reply(chat_id, reply)
+        elif "/trades" in cmd:
+            logger.info(f"/trades from {chat_id}")
+            reply = list_trades(10)
+            await send_reply(chat_id, reply)
     except Exception as e:
         logger.error(f"handle_command error: {e}")
-        await send_reply(chat_id, f"❌ Error: {str(e)[:100]}")
+        await send_reply(chat_id, f"ERROR: {str(e)[:100]}")
 
 
 async def run_bot():

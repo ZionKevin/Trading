@@ -98,193 +98,103 @@ async def get_h1_trend(symbol):
 
 
 async def smart_alert_loop():
-    """Background task: check all 6 symbols M5/M15 every 5 min with trend alignment."""
+    """Phase 6: ONE ALERT PER SESSION max (strict one-at-a-time)."""
     global alert_count_today
-    logger.info("[ALERT] Phase 5 scalp alert loop started (trend aligned, NO SPAM)")
+    logger.info("[ALERT] Phase 6: One alert per session + best signal only (NO SPAM)")
     symbols = ["XAU", "BTC", "ETH", "XAG", "USOIL", "DXY"]
     symbol_emojis = {"XAU": "🥇", "BTC": "🔵", "ETH": "⬜", "XAG": "🪙", "USOIL": "🛢️", "DXY": "💹"}
 
     while True:
         try:
             now = datetime.now()
-            current_hour_utc = now.hour  # Current UTC hour
+            current_hour_utc = now.hour
+
+            # Check if there's already a pending alert in current session
+            pending = get_pending_alerts()
+            if pending:
+                logger.info(f"[INFO] {len(pending)} alert(s) pending, skip posting (one-at-a-time)")
+                await asyncio.sleep(300)
+                continue
+
+            session_info = get_current_session(current_hour_utc)
+            session_name = session_info['session']
+
+            # Get BEST signal (highest win rate from top 3)
+            top_signals = get_top_signals(limit=3)
+            if not top_signals:
+                logger.info("[SKIP] No qualified signals (need >=50% WR and >=5 trades)")
+                await asyncio.sleep(300)
+                continue
+
+            best_signal = top_signals[0]  # Top signal by win rate
+            signal_confidence = get_signal_confidence(best_signal)
+            logger.info(f"[SCAN] Best signal: {best_signal} (conf {signal_confidence:.0f}%)")
+
+            # Scan all symbols for this signal
+            best_setup = None
+            best_sym = None
+            best_tf = None
 
             for sym in symbols:
-                # Get H1 trend for this symbol (Phase 5: trend alignment)
                 h1_trend = await get_h1_trend(sym)
+                is_buy = "BUY" in best_signal
+                trend_aligned = (is_buy and h1_trend == "UP") or (not is_buy and h1_trend == "DOWN")
 
-                # Get M15 for market structure analysis
-                try:
-                    df_m15 = fetch_symbol(sym, "15m", 5)
-                    rejection_m15 = detect_rejection_candle(df_m15)
-                    support_m15 = detect_support_hold(df_m15)
-                except Exception as e:
-                    logger.error(f"Market structure analysis failed: {e}")
-                    rejection_m15 = {'is_rejection': False}
-                    support_m15 = {'is_holding': False}
+                if not trend_aligned:
+                    continue
 
-                # Check session alert limits (C+D feature)
-                session_info = get_current_session(current_hour_utc)
-                session_name = session_info['session']
-
-                # Per-session limits: Euro/American = 2-3, Asian = 4-6
-                if session_name in ['EUROPEAN_AMERICAN_OVERLAP', 'AMERICAN']:
-                    max_alerts_per_session = 3
-                elif session_name == 'ASIAN':
-                    max_alerts_per_session = 6
-                else:
-                    max_alerts_per_session = 2
-
-                session_alert_count = get_session_alert_count(session_name)
+                # Check session skip rule (C+D)
+                skip_session, _ = should_skip_session(current_hour_utc, signal_confidence)
+                if skip_session:
+                    continue
 
                 # Check M5
                 setup_m5 = check_symbol_setup(sym, "5m")
-                if setup_m5:
-                    if setup_m5['volume_is_strong'] and setup_m5['is_consolidating']:
-                        is_buy = "BUY" in setup_m5['signal']
+                if setup_m5 and setup_m5['signal'] == best_signal and setup_m5['volume_is_strong']:
+                    best_setup = setup_m5
+                    best_sym = sym
+                    best_tf = "5m"
+                    break  # Found best_signal on M5, use it
 
-                        # Phase 5 Step 1: Trend alignment check
-                        # Only post BUY if H1 uptrending, only post SELL if H1 downtrending
-                        trend_aligned = (is_buy and h1_trend == "UP") or (not is_buy and h1_trend == "DOWN")
-
-                        if trend_aligned:
-                            # Session alert limit check (max 2-3 Euro/US, 4-6 Asia)
-                            if session_alert_count >= max_alerts_per_session:
-                                logger.info(f"[SKIP] {sym} M5: session limit reached ({session_alert_count}/{max_alerts_per_session})")
-                                continue
-
-                            # Filter to only top win-rate signals
-                            top_signals = get_top_signals(limit=3)
-                            if top_signals and setup_m5['signal'] not in top_signals:
-                                logger.info(f"[SKIP] {sym} M5 {setup_m5['signal']}: not in top signals, post only: {top_signals}")
-                                continue
-
-                            # Phase 5 Step 4: Quality filter - check signal confidence
-                            signal_confidence = get_signal_confidence(setup_m5['signal'])
-                            if signal_confidence >= 50 or signal_confidence == 0:  # 0 = new signal, post it
-                                alert_key = f"{sym}_m5_{setup_m5['signal']}"  # Key includes signal type
-                                last_alert = last_alert_time.get(alert_key, datetime.min)
-                                last_entry = last_alert_entry.get(alert_key, None)
-
-                                # Check: cooldown expired AND entry price moved significantly
-                                cooldown_ok = (now - last_alert).total_seconds() > ALERT_COOLDOWN
-                                price_moved = last_entry is None or abs(setup_m5['entry'] - last_entry) > PRICE_MOVE_THRESHOLD
-
-                                # Option C+D: Session-based filtering
-                                skip_session, session_reason = should_skip_session(current_hour_utc, signal_confidence)
-                                session_ok = not skip_session
-
-                                if cooldown_ok and price_moved and session_ok:
-                                    dir_text = "BUY" if is_buy else "SELL"
-                                    if "BOUNCE" in setup_m5['signal']:
-                                        action = f"Wait for bounce to {setup_m5['entry']:.2f}"
-                                    elif "BREAK" in setup_m5['signal']:
-                                        action = f"Enter on break to {setup_m5['entry']:.2f}"
-                                    else:
-                                        action = f"Enter at {setup_m5['entry']:.2f}"
-
-                                    emoji = symbol_emojis.get(sym, "📍")
-                                    session_info = get_current_session(current_hour_utc)
-                                    msg = f"{emoji} M5 {sym} — {dir_text}\n"
-                                    msg += f"Action: {action}\n"
-                                    msg += f"SL {setup_m5['sl']:.0f} | TP {setup_m5['tp']:.0f}\n"
-                                    msg += f"Signal: {setup_m5['signal']}\n"
-                                    msg += f"Volume: {setup_m5['volume_ratio']:.2f}x | H1: {h1_trend} | Conf: {signal_confidence:.0f}\n"
-                                    msg += f"Session: {session_info['session']} ({session_info['description']})\n"
-
-                                    # Market structure context
-                                    if rejection_m15['is_rejection']:
-                                        msg += f"M15 Rejection: {rejection_m15['type']} ({rejection_m15['strength']}/100) ⚠️\n"
-                                    if support_m15['is_holding']:
-                                        msg += f"Support: Holding ({support_m15['bounces']} bounces) 📍"
-
-                                    await send_reply(CHANNEL_ID, msg)
-                                    last_alert_time[alert_key] = now
-                                    last_alert_entry[alert_key] = setup_m5['entry']  # Track entry for duplicate detection
-
-                                    # Track posted alert for TP/SL monitoring
-                                    alert_id = post_alert(sym, "5m", setup_m5['signal'], setup_m5['entry'],
-                                                         setup_m5['sl'], setup_m5['tp'], h1_trend, signal_confidence, session_info['session'])
-
-                                    alert_count_today += 1
-                                    logger.info(f"[ALERT] #{alert_id} {sym} M5 sent: {setup_m5['signal']} (conf {signal_confidence}, {session_info['session']})")
-                                else:
-                                    if not session_ok:
-                                        logger.info(f"[SKIP] {sym} M5 {setup_m5['signal']}: {session_reason}")
-                                    elif not cooldown_ok:
-                                        logger.info(f"[SKIP] {sym} M5 {setup_m5['signal']}: cooldown not expired yet")
-                                    elif not price_moved:
-                                        logger.info(f"[SKIP] {sym} M5 {setup_m5['signal']}: price barely moved ({abs(setup_m5['entry'] - last_entry):.2f} pips)")
-                            else:
-                                logger.info(f"[SKIP] {sym} M5 {setup_m5['signal']}: confidence too low ({signal_confidence})")
-                        else:
-                            logger.info(f"[SKIP] {sym} M5 {setup_m5['signal']}: H1 {h1_trend} not aligned")
-
-                # Check M15
+                # Check M15 if no M5 match
                 setup_m15 = check_symbol_setup(sym, "15m")
-                if setup_m15:
-                    if setup_m15['volume_is_strong'] and setup_m15['is_consolidating']:
-                        is_buy = "BUY" in setup_m15['signal']
+                if setup_m15 and setup_m15['signal'] == best_signal and setup_m15['volume_is_strong']:
+                    best_setup = setup_m15
+                    best_sym = sym
+                    best_tf = "15m"
+                    # Don't break; keep searching M5 across other symbols
 
-                        # Phase 5 Step 1: Trend alignment check
-                        trend_aligned = (is_buy and h1_trend == "UP") or (not is_buy and h1_trend == "DOWN")
+            if not best_setup:
+                logger.info(f"[SKIP] {best_signal} not found with good setup this cycle")
+                await asyncio.sleep(300)
+                continue
 
-                        if trend_aligned:
-                            # Phase 5 Step 4: Quality filter - check signal confidence
-                            signal_confidence = get_signal_confidence(setup_m15['signal'])
-                            if signal_confidence >= 50 or signal_confidence == 0:  # 0 = new signal, post it
-                                alert_key = f"{sym}_m15_{setup_m15['signal']}"  # Key includes signal type
-                                last_alert = last_alert_time.get(alert_key, datetime.min)
-                                last_entry = last_alert_entry.get(alert_key, None)
+            # Found best_setup, post it
+            h1_trend = await get_h1_trend(best_sym)
+            is_buy = "BUY" in best_setup['signal']
+            dir_text = "BUY" if is_buy else "SELL"
+            emoji = symbol_emojis.get(best_sym, "📍")
 
-                                # Check: cooldown expired AND entry price moved significantly
-                                cooldown_ok = (now - last_alert).total_seconds() > ALERT_COOLDOWN
-                                price_moved = last_entry is None or abs(setup_m15['entry'] - last_entry) > PRICE_MOVE_THRESHOLD
+            if "BOUNCE" in best_setup['signal']:
+                action = f"Wait for bounce to {best_setup['entry']:.2f}"
+            elif "BREAK" in best_setup['signal']:
+                action = f"Enter on break to {best_setup['entry']:.2f}"
+            else:
+                action = f"Enter at {best_setup['entry']:.2f}"
 
-                                # Option C+D: Session-based filtering
-                                skip_session, session_reason = should_skip_session(current_hour_utc, signal_confidence)
-                                session_ok = not skip_session
+            msg = f"{emoji} {best_tf.upper()} {best_sym} — {dir_text}\n"
+            msg += f"Action: {action}\n"
+            msg += f"SL {best_setup['sl']:.0f} | TP {best_setup['tp']:.0f}\n"
+            msg += f"Signal: {best_setup['signal']}\n"
+            msg += f"Conf: {signal_confidence:.0f}% | H1: {h1_trend} | Session: {session_name}\n"
 
-                                if cooldown_ok and price_moved and session_ok:
-                                    dir_text = "BUY" if is_buy else "SELL"
-                                    if "BOUNCE" in setup_m15['signal']:
-                                        action = f"Wait for bounce to {setup_m15['entry']:.2f}"
-                                    elif "BREAK" in setup_m15['signal']:
-                                        action = f"Enter on break to {setup_m15['entry']:.2f}"
-                                    else:
-                                        action = f"Enter at {setup_m15['entry']:.2f}"
+            await send_reply(CHANNEL_ID, msg)
 
-                                    emoji = symbol_emojis.get(sym, "📍")
-                                    session_info = get_current_session(current_hour_utc)
-                                    msg = f"{emoji} M15 {sym} — {dir_text}\n"
-                                    msg += f"Action: {action}\n"
-                                    msg += f"SL {setup_m15['sl']:.0f} | TP {setup_m15['tp']:.0f}\n"
-                                    msg += f"Signal: {setup_m15['signal']}\n"
-                                    msg += f"Volume: {setup_m15['volume_ratio']:.2f}x | H1: {h1_trend} | Conf: {signal_confidence:.0f}\n"
-                                    msg += f"Session: {session_info['session']} ({session_info['description']})\n"
-
-                                    # Market structure context
-                                    if rejection_m15['is_rejection']:
-                                        msg += f"M15 Rejection: {rejection_m15['type']} ({rejection_m15['strength']}/100) ⚠️\n"
-                                    if support_m15['is_holding']:
-                                        msg += f"Support: Holding ({support_m15['bounces']} bounces) 📍"
-
-                                    await send_reply(CHANNEL_ID, msg)
-                                    last_alert_time[alert_key] = now
-                                    last_alert_entry[alert_key] = setup_m15['entry']  # Track entry for duplicate detection
-                                    alert_count_today += 1
-                                    logger.info(f"[ALERT] {sym} M15 sent: {setup_m15['signal']} (conf {signal_confidence}, {session_info['session']})")
-                                else:
-                                    if not session_ok:
-                                        logger.info(f"[SKIP] {sym} M15 {setup_m15['signal']}: {session_reason}")
-                                    elif not cooldown_ok:
-                                        logger.info(f"[SKIP] {sym} M15 {setup_m15['signal']}: cooldown not expired yet")
-                                    elif not price_moved:
-                                        logger.info(f"[SKIP] {sym} M15 {setup_m15['signal']}: price barely moved ({abs(setup_m15['entry'] - last_entry):.2f} pips)")
-                            else:
-                                logger.info(f"[SKIP] {sym} M15 {setup_m15['signal']}: confidence too low ({signal_confidence})")
-                        else:
-                            logger.info(f"[SKIP] {sym} M15 {setup_m15['signal']}: H1 {h1_trend} not aligned")
+            # Track alert
+            alert_id = post_alert(best_sym, best_tf, best_setup['signal'], best_setup['entry'],
+                                 best_setup['sl'], best_setup['tp'], h1_trend, signal_confidence, session_name)
+            alert_count_today += 1
+            logger.info(f"[ALERT] #{alert_id} {best_sym} {best_tf} {best_setup['signal']} posted (conf {signal_confidence:.0f})")
 
             # Check every 5 minutes
             await asyncio.sleep(300)

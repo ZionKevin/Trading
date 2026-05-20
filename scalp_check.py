@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """Scalp setup trên M5/M15 - dùng support/resistance + pivot + MA89."""
+import logging
 from fetch import fetch_symbol
 from indicators import IndicatorSet
 from datetime import datetime
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 def detect_support_resistance(df, lookback=10):
@@ -23,6 +26,56 @@ def detect_support_resistance(df, lookback=10):
     resistances = sorted(recent['High'].nlargest(2).values, reverse=True)  # 2 highest
 
     return {'supports': supports, 'resistances': resistances}
+
+
+def check_volume_strength(df, lookback=20):
+    """Check if recent volume is stronger than average.
+
+    Args:
+        df: DataFrame với OHLCV
+        lookback: days for average
+
+    Returns:
+        dict: {'avg_volume': float, 'current_volume': float, 'ratio': float, 'is_strong': bool}
+    """
+    recent = df.tail(lookback)
+    avg_vol = recent['Volume'].mean()
+    current_vol = df['Volume'].iloc[-1]
+
+    ratio = current_vol / avg_vol if avg_vol > 0 else 0
+    is_strong = ratio > 1.2  # Volume > 120% of average = strong
+
+    return {
+        'avg_volume': avg_vol,
+        'current_volume': current_vol,
+        'ratio': ratio,
+        'is_strong': is_strong
+    }
+
+
+def check_consolidation(df, lookback=20):
+    """Check if market is consolidating (low ATR = tight range).
+
+    Args:
+        df: DataFrame với OHLCV
+        lookback: days for ATR average
+
+    Returns:
+        dict: {'atr': float, 'atr_avg': float, 'is_consolidating': bool}
+    """
+    # Simple ATR: average of (High - Low)
+    recent = df.tail(lookback)
+    current_atr = df['High'].iloc[-1] - df['Low'].iloc[-1]
+    avg_atr = recent['High'].sub(recent['Low']).mean()
+
+    # Consolidating if current ATR < 70% of average (tight range)
+    is_consolidating = current_atr < (avg_atr * 0.7)
+
+    return {
+        'atr': current_atr,
+        'atr_avg': avg_atr,
+        'is_consolidating': is_consolidating
+    }
 
 
 def detect_trendline_breakout(df, lookback=20):
@@ -92,12 +145,15 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
     # Detect trendline
     trendline_info = detect_trendline_breakout(df, lookback=20)
 
-    # Check H1 trend confirmation
+    # Check H1 trend confirmation (RSI > 50 = UP/bullish, RSI < 50 = DOWN/bearish)
     h1_trend = None
     if h1_df is not None and len(h1_df) > 0:
         h1_ind = IndicatorSet(h1_df).calculate_all()
         h1_rsi = h1_ind.latest('rsi')
-        h1_trend = "UP" if h1_rsi < 50 else "DOWN" if h1_rsi > 50 else "NEUTRAL"
+        h1_trend = "UP" if h1_rsi > 50 else "DOWN" if h1_rsi < 50 else "NEUTRAL"
+
+    # Check consolidation (MUST be before using ATR for SL/TP)
+    cons_info = check_consolidation(df, lookback=20)
 
     # Entry logic
     entry = None
@@ -158,13 +214,15 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
     if not entry:
         return None
 
-    # Tính SL/TP
+    # Tính SL/TP (Phase 5: Dynamic based on ATR)
+    # SL = entry ± 1×ATR, TP = entry ± 2×ATR (risk:reward = 1:2)
+    atr = cons_info['atr']
     if "BUY" in signal_type:
-        sl = entry - 6  # 6 pips SL
-        tp = entry + 10  # 10 pips TP
+        sl = entry - atr  # SL = entry - 1×ATR
+        tp = entry + (2 * atr)  # TP = entry + 2×ATR
     else:  # SELL
-        sl = entry + 6
-        tp = entry - 10
+        sl = entry + atr
+        tp = entry - (2 * atr)
 
     # H1 confirmation string
     if h1_trend:
@@ -174,6 +232,9 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
             confirmation = f"✅ H1 {h1_trend} aligned"
         else:
             confirmation = f"⚠️ H1 {h1_trend} (check confluence)"
+
+    # Check volume strength
+    vol_info = check_volume_strength(df, lookback=20)
 
     return {
         'entry': entry,
@@ -190,8 +251,33 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
         's2': s2,
         'trendline': trendline_info['trendline_price'],
         'trendline_broken': trendline_info['broken'],
-        'h1_confirmation': confirmation
+        'h1_confirmation': confirmation,
+        'volume_ratio': vol_info['ratio'],
+        'volume_is_strong': vol_info['is_strong'],
+        'is_consolidating': cons_info['is_consolidating'],
+        'atr': cons_info['atr'],
+        'atr_avg': cons_info['atr_avg']
     }
+
+
+def check_symbol_setup(symbol, timeframe="5m"):
+    """Generic scalp setup check for any symbol (BTC, ETH, XAU, XAG, USOIL, DXY).
+
+    Args:
+        symbol: 'XAU', 'BTC', 'ETH', 'USOIL', 'XAG', 'DXY'
+        timeframe: '5m' or '15m'
+
+    Returns:
+        dict with setup details or None
+    """
+    try:
+        df = fetch_symbol(symbol, timeframe, 7)
+        df_h1 = fetch_symbol(symbol, "1h", 5)
+        setup = find_scalp_entry(df, symbol, df_h1)
+        return setup
+    except Exception as e:
+        logger.error(f"check_symbol_setup {symbol} {timeframe} error: {e}")
+        return None
 
 
 def check_m5_scalp():
@@ -225,6 +311,12 @@ def check_m5_scalp():
                 lines.append(f"Entry: {setup['entry']:.2f} | SL: {setup['sl']:.2f} | TP: {setup['tp']:.2f}")
                 lines.append(f"Action: {action}")
                 lines.append(f"Signal: {setup['signal']}")
+
+                # Phase 2: Volume + Consolidation
+                vol_status = "✓ Strong" if setup['volume_is_strong'] else "✗ Weak"
+                cons_status = "✓ Yes" if setup['is_consolidating'] else "✗ No"
+                lines.append(f"Volume: {vol_status} ({setup['volume_ratio']:.2f}x) | Consolidating: {cons_status}")
+
                 if setup['h1_confirmation']:
                     lines.append(f"{setup['h1_confirmation']}")
             else:
@@ -266,6 +358,12 @@ def check_m15_scalp():
                 lines.append(f"Entry: {setup['entry']:.2f} | SL: {setup['sl']:.2f} | TP: {setup['tp']:.2f}")
                 lines.append(f"Action: {action}")
                 lines.append(f"Signal: {setup['signal']}")
+
+                # Phase 2: Volume + Consolidation
+                vol_status = "✓ Strong" if setup['volume_is_strong'] else "✗ Weak"
+                cons_status = "✓ Yes" if setup['is_consolidating'] else "✗ No"
+                lines.append(f"Volume: {vol_status} ({setup['volume_ratio']:.2f}x) | Consolidating: {cons_status}")
+
                 if setup['h1_confirmation']:
                     lines.append(f"{setup['h1_confirmation']}")
             else:

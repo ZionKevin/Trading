@@ -43,7 +43,8 @@ async def get_updates():
 async def send_reply(chat_id, text):
     """Send message to chat."""
     try:
-        await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+        # Send without markdown to avoid parse errors
+        await bot.send_message(chat_id=chat_id, text=text)
         logger.info(f"[SENT] {len(text)} chars to {chat_id}")
         return True
     except Exception as e:

@@ -1,0 +1,42 @@
+{
+  "signals": {
+    "BUY_TEST": {
+      "total": 1,
+      "wins": 1,
+      "losses": 0,
+      "win_rate": 100.0,
+      "total_pnl": 220.0,
+      "avg_win": 0,
+      "avg_loss": 0,
+      "rrr": 0,
+      "enabled": true,
+      "confidence": 0,
+      "last_trade": "2026-05-20T13:12:57.671720"
+    },
+    "BUY_TEST2": {
+      "total": 1,
+      "wins": 1,
+      "losses": 0,
+      "win_rate": 100.0,
+      "total_pnl": 20.0,
+      "avg_win": 0,
+      "avg_loss": 0,
+      "rrr": 0,
+      "enabled": true,
+      "confidence": 0,
+      "last_trade": "2026-05-20T13:12:57.684303"
+    }
+  },
+  "symbols": {
+    "XAU": {
+      "total": 2,
+      "wins": 2,
+      "losses": 0,
+      "win_rate": 100.0,
+      "total_pnl": 240.0
+    }
+  },
+  "hours": {},
+  "last_update": "2026-05-20T15:00:00.016346",
+  "disabled_signals": []
+}

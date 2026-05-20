@@ -172,6 +172,75 @@ def list_trades(limit=10):
     return msg
 
 
+def get_daily_stats(date_str=None):
+    """Get stats for specific date (YYYY-MM-DD). Default: today."""
+    if date_str is None:
+        date_str = datetime.now().strftime('%Y-%m-%d')
+
+    trades = load_trades()
+    daily_trades = [t for t in trades if t['entry_time'].startswith(date_str)]
+
+    if not daily_trades:
+        return None
+
+    closed = [t for t in daily_trades if t['status'] == 'CLOSED']
+    if not closed:
+        return None
+
+    wins = [t for t in closed if t['pnl'] > 0]
+    losses = [t for t in closed if t['pnl'] < 0]
+
+    total_pnl = sum(t['pnl'] for t in closed)
+    win_rate = len(wins) / len(closed) * 100 if closed else 0
+    avg_win = sum(t['pnl'] for t in wins) / len(wins) if wins else 0
+    avg_loss = sum(abs(t['pnl']) for t in losses) / len(losses) if losses else 0
+
+    by_signal = {}
+    for trade in closed:
+        sig = trade['signal']
+        if sig not in by_signal:
+            by_signal[sig] = {'wins': 0, 'losses': 0, 'total_pnl': 0}
+        if trade['pnl'] > 0:
+            by_signal[sig]['wins'] += 1
+        else:
+            by_signal[sig]['losses'] += 1
+        by_signal[sig]['total_pnl'] += trade['pnl']
+
+    return {
+        'date': date_str,
+        'total_closed': len(closed),
+        'total_open': len([t for t in daily_trades if t['status'] == 'OPEN']),
+        'wins': len(wins),
+        'losses': len(losses),
+        'win_rate': win_rate,
+        'avg_win': avg_win,
+        'avg_loss': avg_loss,
+        'total_pnl': total_pnl,
+        'by_signal': by_signal
+    }
+
+
+def format_daily_stats():
+    """Format today's stats for daily report."""
+    daily = get_daily_stats()
+
+    if not daily or daily['total_closed'] == 0:
+        return "📊 DAILY REPORT — No trades closed today"
+
+    msg = f"📊 DAILY REPORT — {daily['date']}\n"
+    msg += f"Closed: {daily['total_closed']} | Open: {daily['total_open']}\n"
+    msg += f"Wins: {daily['wins']} | Losses: {daily['losses']} | WR: {daily['win_rate']:.1f}%\n"
+    msg += f"P&L: ${daily['total_pnl']:.2f}\n"
+
+    if daily['by_signal']:
+        msg += "\nBy Signal:\n"
+        for sig, data in sorted(daily['by_signal'].items()):
+            wr = data['wins'] / (data['wins'] + data['losses']) * 100 if (data['wins'] + data['losses']) > 0 else 0
+            msg += f"  {sig}: {data['wins']}W-{data['losses']}L ({wr:.0f}%) | ${data['total_pnl']:.2f}\n"
+
+    return msg
+
+
 if __name__ == "__main__":
     # Test
     log_entry("BUY_PIVOT_S1_BOUNCE", 4550.00)

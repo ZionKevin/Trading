@@ -182,17 +182,19 @@ async def smart_alert_loop():
             else:
                 action = f"Enter at {best_setup['entry']:.2f}"
 
-            msg = f"{emoji} {best_tf.upper()} {best_sym} — {dir_text}\n"
+            # Track alert FIRST to get ID
+            alert_id = post_alert(best_sym, best_tf, best_setup['signal'], best_setup['entry'],
+                                 best_setup['sl'], best_setup['tp'], h1_trend, signal_confidence, session_name)
+
+            msg = f"🔔 Alert #{alert_id}\n"
+            msg += f"{emoji} {best_tf.upper()} {best_sym} — {dir_text}\n"
             msg += f"Action: {action}\n"
             msg += f"SL {best_setup['sl']:.0f} | TP {best_setup['tp']:.0f}\n"
             msg += f"Signal: {best_setup['signal']}\n"
             msg += f"Conf: {signal_confidence:.0f}% | H1: {h1_trend} | Session: {session_name}\n"
+            msg += f"Report: /tp {alert_id} or /sl {alert_id} or /exit {alert_id} <price>"
 
             await send_reply(CHANNEL_ID, msg)
-
-            # Track alert
-            alert_id = post_alert(best_sym, best_tf, best_setup['signal'], best_setup['entry'],
-                                 best_setup['sl'], best_setup['tp'], h1_trend, signal_confidence, session_name)
             alert_count_today += 1
             logger.info(f"[ALERT] #{alert_id} {best_sym} {best_tf} {best_setup['signal']} posted (conf {signal_confidence:.0f})")
 

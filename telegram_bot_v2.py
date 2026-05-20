@@ -8,6 +8,7 @@ from telegram.error import TelegramError
 from price_check import check_prices
 from trend_check import check_trends
 from market_status import market_overview
+from scalp_check import check_h1_trend, check_m5_scalp, check_m15_scalp
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -61,6 +62,18 @@ async def handle_command(chat_id, text):
         elif "/status" in cmd:
             logger.info(f"/status from {chat_id}")
             reply = market_overview()
+            await send_reply(chat_id, reply)
+        elif "/h1" in cmd:
+            logger.info(f"/h1 from {chat_id}")
+            reply = check_h1_trend()
+            await send_reply(chat_id, reply)
+        elif "/m5" in cmd:
+            logger.info(f"/m5 from {chat_id}")
+            reply = check_m5_scalp()
+            await send_reply(chat_id, reply)
+        elif "/m15" in cmd:
+            logger.info(f"/m15 from {chat_id}")
+            reply = check_m15_scalp()
             await send_reply(chat_id, reply)
     except Exception as e:
         logger.error(f"handle_command error: {e}")

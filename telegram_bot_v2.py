@@ -86,9 +86,19 @@ async def smart_alert_loop():
                 last_m5 = last_alert_time.get("m5", datetime.min)
                 if (now - last_m5).total_seconds() > alert_cooldown:
                     dir_text = "BUY" if "BUY" in setup_m5['signal'] else "SELL"
-                    msg = f"M5 ALERT\n{dir_text} XAU at {setup_m5['entry']:.2f}\n"
+
+                    # Determine action text
+                    if "BOUNCE" in setup_m5['signal']:
+                        action = f"Wait for bounce to {setup_m5['entry']:.2f}"
+                    elif "BREAK" in setup_m5['signal']:
+                        action = f"Enter on break to {setup_m5['entry']:.2f}"
+                    else:
+                        action = f"Enter at {setup_m5['entry']:.2f}"
+
+                    msg = f"M5 ALERT - {dir_text}\n"
+                    msg += f"Action: {action}\n"
                     msg += f"SL {setup_m5['sl']:.2f} TP {setup_m5['tp']:.2f}\n"
-                    msg += setup_m5['signal']
+                    msg += f"Signal: {setup_m5['signal']}"
                     await send_reply(CHANNEL_ID, msg)
                     last_alert_time["m5"] = now
                     logger.info(f"[ALERT] M5 setup sent: {setup_m5['signal']}")
@@ -99,9 +109,19 @@ async def smart_alert_loop():
                 last_m15 = last_alert_time.get("m15", datetime.min)
                 if (now - last_m15).total_seconds() > alert_cooldown:
                     dir_text = "BUY" if "BUY" in setup_m15['signal'] else "SELL"
-                    msg = f"M15 ALERT\n{dir_text} XAU at {setup_m15['entry']:.2f}\n"
+
+                    # Determine action text
+                    if "BOUNCE" in setup_m15['signal']:
+                        action = f"Wait for bounce to {setup_m15['entry']:.2f}"
+                    elif "BREAK" in setup_m15['signal']:
+                        action = f"Enter on break to {setup_m15['entry']:.2f}"
+                    else:
+                        action = f"Enter at {setup_m15['entry']:.2f}"
+
+                    msg = f"M15 ALERT - {dir_text}\n"
+                    msg += f"Action: {action}\n"
                     msg += f"SL {setup_m15['sl']:.2f} TP {setup_m15['tp']:.2f}\n"
-                    msg += setup_m15['signal']
+                    msg += f"Signal: {setup_m15['signal']}"
                     await send_reply(CHANNEL_ID, msg)
                     last_alert_time["m15"] = now
                     logger.info(f"[ALERT] M15 setup sent: {setup_m15['signal']}")

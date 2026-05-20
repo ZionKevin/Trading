@@ -197,26 +197,40 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
 def check_m5_scalp():
     """M5 scalp analysis cho XAU."""
     symbols = ["XAU"]
-    lines = [f"📊 **M5 SCALP SETUP** — {datetime.now().strftime('%H:%M UTC')}\n"]
+    lines = [f"M5 SCALP SETUP — {datetime.now().strftime('%H:%M UTC')}\n"]
 
     for sym in symbols:
         try:
-            df_m5 = fetch_symbol(sym, "5m", 7)  # 7 days = ~200 M5 candles
-            df_h1 = fetch_symbol(sym, "1h", 5)  # 5 days for H1 confirmation
+            df_m5 = fetch_symbol(sym, "5m", 7)
+            df_h1 = fetch_symbol(sym, "1h", 5)
             setup = find_scalp_entry(df_m5, sym, df_h1)
 
             if setup:
-                direction = "🟢 BUY" if "BUY" in setup['signal'] else "🔴 SELL"
-                lines.append(f"{direction} **{sym}** @ {setup['entry']:,.2f}")
-                lines.append(f"  Entry: {setup['entry']:,.2f} | SL: {setup['sl']:,.2f} | TP: {setup['tp']:,.2f}")
-                lines.append(f"  Signal: {setup['signal']}")
+                current = df_m5['Close'].iloc[-1]
+                direction = "BUY" if "BUY" in setup['signal'] else "SELL"
+
+                # Action text
+                if "BOUNCE" in setup['signal']:
+                    action = f"Wait for bounce to {setup['entry']:.2f}"
+                    level_name = "support" if "BUY" in setup['signal'] else "resistance"
+                elif "BREAKOUT" in setup['signal'] or "BREAK" in setup['signal']:
+                    action = f"Enter on break above {setup['entry']:.2f}" if "BUY" in setup['signal'] else f"Enter on break below {setup['entry']:.2f}"
+                    level_name = "level"
+                else:
+                    action = f"Enter at {setup['entry']:.2f}"
+                    level_name = "entry"
+
+                lines.append(f"{direction} - {sym}")
+                lines.append(f"Current: {current:.2f} | {level_name.capitalize()}: {setup['entry']:.2f}")
+                lines.append(f"Entry: {setup['entry']:.2f} | SL: {setup['sl']:.2f} | TP: {setup['tp']:.2f}")
+                lines.append(f"Action: {action}")
+                lines.append(f"Signal: {setup['signal']}")
                 if setup['h1_confirmation']:
-                    lines.append(f"  {setup['h1_confirmation']}")
-                lines.append(f"  MA89: {setup['ma89']:,.2f} | R1: {setup['r1']:,.2f} | S1: {setup['s1']:,.2f}")
+                    lines.append(f"{setup['h1_confirmation']}")
             else:
-                lines.append(f"⏳ **{sym}** — No M5 setup yet")
+                lines.append(f"No M5 setup yet")
         except Exception as e:
-            lines.append(f"**{sym}:** ERROR - {str(e)[:50]}")
+            lines.append(f"ERROR: {str(e)[:50]}")
 
     return "\n".join(lines)
 
@@ -224,26 +238,40 @@ def check_m5_scalp():
 def check_m15_scalp():
     """M15 scalp analysis cho XAU."""
     symbols = ["XAU"]
-    lines = [f"📊 **M15 SCALP SETUP** — {datetime.now().strftime('%H:%M UTC')}\n"]
+    lines = [f"M15 SCALP SETUP — {datetime.now().strftime('%H:%M UTC')}\n"]
 
     for sym in symbols:
         try:
             df_m15 = fetch_symbol(sym, "15m", 7)
-            df_h1 = fetch_symbol(sym, "1h", 5)  # H1 confirmation
+            df_h1 = fetch_symbol(sym, "1h", 5)
             setup = find_scalp_entry(df_m15, sym, df_h1)
 
             if setup:
-                direction = "🟢 BUY" if "BUY" in setup['signal'] else "🔴 SELL"
-                lines.append(f"{direction} **{sym}** @ {setup['entry']:,.2f}")
-                lines.append(f"  Entry: {setup['entry']:,.2f} | SL: {setup['sl']:,.2f} | TP: {setup['tp']:,.2f}")
-                lines.append(f"  Signal: {setup['signal']}")
+                current = df_m15['Close'].iloc[-1]
+                direction = "BUY" if "BUY" in setup['signal'] else "SELL"
+
+                # Action text
+                if "BOUNCE" in setup['signal']:
+                    action = f"Wait for bounce to {setup['entry']:.2f}"
+                    level_name = "support" if "BUY" in setup['signal'] else "resistance"
+                elif "BREAKOUT" in setup['signal'] or "BREAK" in setup['signal']:
+                    action = f"Enter on break above {setup['entry']:.2f}" if "BUY" in setup['signal'] else f"Enter on break below {setup['entry']:.2f}"
+                    level_name = "level"
+                else:
+                    action = f"Enter at {setup['entry']:.2f}"
+                    level_name = "entry"
+
+                lines.append(f"{direction} - {sym}")
+                lines.append(f"Current: {current:.2f} | {level_name.capitalize()}: {setup['entry']:.2f}")
+                lines.append(f"Entry: {setup['entry']:.2f} | SL: {setup['sl']:.2f} | TP: {setup['tp']:.2f}")
+                lines.append(f"Action: {action}")
+                lines.append(f"Signal: {setup['signal']}")
                 if setup['h1_confirmation']:
-                    lines.append(f"  {setup['h1_confirmation']}")
-                lines.append(f"  MA89: {setup['ma89']:,.2f} | R1: {setup['r1']:,.2f} | S1: {setup['s1']:,.2f}")
+                    lines.append(f"{setup['h1_confirmation']}")
             else:
-                lines.append(f"⏳ **{sym}** — No M15 setup yet")
+                lines.append(f"No M15 setup yet")
         except Exception as e:
-            lines.append(f"**{sym}:** ERROR - {str(e)[:50]}")
+            lines.append(f"ERROR: {str(e)[:50]}")
 
     return "\n".join(lines)
 

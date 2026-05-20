@@ -8,7 +8,10 @@ from telegram.error import TelegramError
 from price_check import check_prices
 from trend_check import check_trends
 from market_status import market_overview
-from scalp_check import check_h1_trend, check_m5_scalp, check_m15_scalp
+from scalp_check import check_h1_trend, check_m5_scalp, check_m15_scalp, find_scalp_entry
+from fetch import fetch_symbol
+from indicators import IndicatorSet
+from datetime import datetime, timedelta
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -17,9 +20,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = "8818803199:AAECR9hCDj5Cnw91YR75vqg6pUkhLMG08QY"
+CHANNEL_ID = "@Zion_XAU_Signals"
 bot = Bot(token=BOT_TOKEN)
 
 last_update_id = 0
+last_alert_time = {}  # Track last alert per timeframe to avoid spam
 
 
 async def get_updates():
@@ -44,6 +49,67 @@ async def send_reply(chat_id, text):
     except Exception as e:
         logger.error(f"send_reply error: {e}")
         return False
+
+
+async def check_scalp_setup(timeframe):
+    """Check if M5/M15 has setup. Return setup dict or None."""
+    try:
+        if timeframe == "5m":
+            df = fetch_symbol("XAU", "5m", 7)
+        elif timeframe == "15m":
+            df = fetch_symbol("XAU", "15m", 7)
+        else:
+            return None
+
+        df_h1 = fetch_symbol("XAU", "1h", 5)
+        setup = find_scalp_entry(df, "XAU", df_h1)
+        return setup
+    except Exception as e:
+        logger.error(f"check_scalp_setup {timeframe} error: {e}")
+        return None
+
+
+async def smart_alert_loop():
+    """Background task: check M5/M15 every 5 min, alert only if setup found."""
+    logger.info("[ALERT] Smart scalp alert loop started")
+    alert_cooldown = 300  # 5 minutes between alerts for same timeframe
+
+    while True:
+        try:
+            now = datetime.now()
+
+            # Check M5
+            setup_m5 = await check_scalp_setup("5m")
+            if setup_m5:
+                last_m5 = last_alert_time.get("m5", datetime.min)
+                if (now - last_m5).total_seconds() > alert_cooldown:
+                    dir_text = "BUY" if "BUY" in setup_m5['signal'] else "SELL"
+                    msg = f"M5 ALERT\n{dir_text} XAU at {setup_m5['entry']:.2f}\n"
+                    msg += f"SL {setup_m5['sl']:.2f} TP {setup_m5['tp']:.2f}\n"
+                    msg += setup_m5['signal']
+                    await send_reply(CHANNEL_ID, msg)
+                    last_alert_time["m5"] = now
+                    logger.info(f"[ALERT] M5 setup sent: {setup_m5['signal']}")
+
+            # Check M15
+            setup_m15 = await check_scalp_setup("15m")
+            if setup_m15:
+                last_m15 = last_alert_time.get("m15", datetime.min)
+                if (now - last_m15).total_seconds() > alert_cooldown:
+                    dir_text = "BUY" if "BUY" in setup_m15['signal'] else "SELL"
+                    msg = f"M15 ALERT\n{dir_text} XAU at {setup_m15['entry']:.2f}\n"
+                    msg += f"SL {setup_m15['sl']:.2f} TP {setup_m15['tp']:.2f}\n"
+                    msg += setup_m15['signal']
+                    await send_reply(CHANNEL_ID, msg)
+                    last_alert_time["m15"] = now
+                    logger.info(f"[ALERT] M15 setup sent: {setup_m15['signal']}")
+
+            # Check every 5 minutes
+            await asyncio.sleep(300)
+
+        except Exception as e:
+            logger.error(f"smart_alert_loop error: {e}")
+            await asyncio.sleep(60)
 
 
 async def handle_command(chat_id, text):
@@ -116,5 +182,13 @@ async def run_bot():
             await asyncio.sleep(5)
 
 
+async def main():
+    """Run bot + smart alert loop concurrently."""
+    await asyncio.gather(
+        run_bot(),
+        smart_alert_loop()
+    )
+
+
 if __name__ == "__main__":
-    asyncio.run(run_bot())
+    asyncio.run(main())

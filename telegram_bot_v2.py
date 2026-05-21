@@ -17,6 +17,7 @@ from fetch import fetch_symbol
 from indicators import IndicatorSet
 from trade_log import log_entry, close_trade, format_stats, list_trades, load_trades, format_daily_stats
 from learning import learn_from_trades, format_learning_report, get_signal_confidence, get_enabled_signals, generate_recommendations
+from trading_profile import add_taught_trade, format_profile, list_taught_trades
 from datetime import datetime, timedelta
 
 logging.basicConfig(
@@ -393,6 +394,37 @@ async def handle_command(chat_id, text):
                     reply = "Format: /exit <alert_id> <price>"
             else:
                 reply = "Format: /exit <alert_id> <price>"
+            await send_reply(chat_id, reply)
+        elif "/teach" in cmd:
+            logger.info(f"/teach from {chat_id}")
+            # Format: /teach entry sl tp reason
+            # Example: /teach 4543 4540 4570 Chờ test Fibo 38.2%, rejection wick, H1 UP
+            parts = text.split(maxsplit=4)
+            if len(parts) >= 5:
+                try:
+                    entry = float(parts[1])
+                    sl = float(parts[2])
+                    tp = float(parts[3])
+                    reason = parts[4]
+
+                    trade = add_taught_trade(entry, sl, tp, reason)
+                    reply = f"✅ Trade #️⃣{trade['id']} learned!\n"
+                    reply += f"Entry: {entry:.0f} | SL: {sl:.0f} | TP: {tp:.0f}\n"
+                    reply += f"Reason: {reason}\n\n"
+                    reply += "Use /mystyle to see your trading profile"
+                    logger.info(f"[TEACH] Trade #{trade['id']}: {reason}")
+                except ValueError:
+                    reply = "Format: /teach <entry> <sl> <tp> <reason>\nExample: /teach 4543 4540 4570 Chờ test Fibo 38.2%"
+            else:
+                reply = "Format: /teach <entry> <sl> <tp> <reason>\nExample: /teach 4543 4540 4570 Chờ test Fibo 38.2%"
+            await send_reply(chat_id, reply)
+        elif "/mystyle" in cmd:
+            logger.info(f"/mystyle from {chat_id}")
+            reply = format_profile()
+            await send_reply(chat_id, reply)
+        elif "/trades-taught" in cmd:
+            logger.info(f"/trades-taught from {chat_id}")
+            reply = list_taught_trades(10)
             await send_reply(chat_id, reply)
     except Exception as e:
         logger.error(f"handle_command error: {e}")

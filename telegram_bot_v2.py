@@ -182,26 +182,29 @@ async def smart_alert_loop():
             if "FIBO" in signal:
                 # Fibonacci: show which level to buy/sell at
                 if "38" in signal:
-                    action = f"Wait {dir_text} at Fibo 38.2% ({entry:.0f})"
+                    action = f"Chờ {dir_text} ở Fibo 38.2% ({entry:.0f})"
                 else:  # 61.8
-                    action = f"Wait {dir_text} at Fibo 61.8% ({entry:.0f})"
+                    action = f"Chờ {dir_text} ở Fibo 61.8% ({entry:.0f})"
+            elif "SUPPORT" in signal and "BREAK" in signal:
+                # Support BREAK: break below support, then buy (counter-trend risky)
+                action = f"Chờ giá break hỗ trợ {entry:.0f}, sau đó {dir_text}"
             elif "SUPPORT" in signal or "S1" in signal:
                 # Support bounce: buy at support
-                action = f"Wait {dir_text} at support {entry:.0f}"
+                action = f"Chờ {dir_text} ở hỗ trợ {entry:.0f}"
+            elif "RESISTANCE" in signal and "BREAK" in signal:
+                # Resistance BREAK: break above resistance, then sell (counter-trend risky)
+                action = f"Chờ giá break cản {entry:.0f}, sau đó {dir_text}"
             elif "RESISTANCE" in signal or "R1" in signal:
                 # Resistance bounce: sell at resistance
-                action = f"Wait {dir_text} at resistance {entry:.0f}"
+                action = f"Chờ {dir_text} ở cản {entry:.0f}"
             elif "MA89" in signal:
                 # MA89 bounce
-                action = f"Wait {dir_text} at MA89 ({entry:.0f})"
-            elif "BREAK" in signal:
-                # Breakout: enter on break
-                action = f"{dir_text} on break of {entry:.0f}"
+                action = f"Chờ {dir_text} ở MA89 ({entry:.0f})"
             elif "TRENDLINE" in signal:
                 # Trendline break
-                action = f"{dir_text} trendline break at {entry:.0f}"
+                action = f"Chờ giá phá trendline {entry:.0f}, sau đó {dir_text}"
             else:
-                action = f"Enter at {entry:.0f}"
+                action = f"Vào lệnh ở {entry:.0f}"
 
             # Boost confidence for Fibo+rejection confluence (high quality setup)
             final_confidence = signal_confidence

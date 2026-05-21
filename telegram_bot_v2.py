@@ -18,7 +18,9 @@ from indicators import IndicatorSet
 from trade_log import log_entry, close_trade, format_stats, list_trades, load_trades, format_daily_stats
 from learning import learn_from_trades, format_learning_report, get_signal_confidence, get_enabled_signals, generate_recommendations
 from trading_profile import add_taught_trade, format_profile, list_taught_trades
+from macro_analysis import generate_daily_report, generate_pre_event_alert, format_macro_summary
 from datetime import datetime, timedelta
+import pytz
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -96,6 +98,40 @@ async def get_h1_trend(symbol):
     except Exception as e:
         logger.error(f"get_h1_trend {symbol} error: {e}")
         return "NEUTRAL"
+
+
+async def daily_macro_report():
+    """Send daily macro report at 1 AM US time (6 PM UTC)."""
+    while True:
+        try:
+            now = datetime.now(pytz.UTC)
+            # 1 AM EST = 6 PM UTC, 1 AM EDT = 5 PM UTC (let's use 6 PM UTC for consistency)
+            if now.hour == 18 and now.minute == 0:  # 6 PM UTC = 1 AM EST
+                report = generate_daily_report(0)
+                await send_reply(CHANNEL_ID, report)
+                logger.info("[MACRO] Daily report sent")
+                await asyncio.sleep(60)  # Avoid duplicate in same minute
+            await asyncio.sleep(30)  # Check every 30 seconds
+        except Exception as e:
+            logger.error(f"daily_macro_report error: {e}")
+            await asyncio.sleep(60)
+
+
+async def pre_event_alerts():
+    """Send pre-event alerts 30 min before major events (5:30 AM US = 10:30 UTC)."""
+    while True:
+        try:
+            now = datetime.now(pytz.UTC)
+            # 5:30 AM EST = 10:30 UTC, 5:30 AM EDT = 9:30 UTC (check 10:30 UTC)
+            if now.hour == 10 and now.minute == 30:
+                alert = generate_pre_event_alert("Major Economic Event", "TBD", "TBD", 30)
+                await send_reply(CHANNEL_ID, alert)
+                logger.info("[MACRO] Pre-event alert sent")
+                await asyncio.sleep(60)
+            await asyncio.sleep(30)
+        except Exception as e:
+            logger.error(f"pre_event_alerts error: {e}")
+            await asyncio.sleep(60)
 
 
 async def smart_alert_loop():
@@ -426,6 +462,10 @@ async def handle_command(chat_id, text):
             logger.info(f"/trades-taught from {chat_id}")
             reply = list_taught_trades(10)
             await send_reply(chat_id, reply)
+        elif "/macro" in cmd:
+            logger.info(f"/macro from {chat_id}")
+            reply = generate_daily_report(0)
+            await send_reply(chat_id, reply)
     except Exception as e:
         logger.error(f"handle_command error: {e}")
         await send_reply(chat_id, f"ERROR: {str(e)[:100]}")
@@ -538,12 +578,14 @@ async def daily_report_task():
 
 
 async def main():
-    """Run bot + smart alert loop + daily report + auto-learning concurrently."""
+    """Run bot + smart alert loop + daily report + auto-learning + macro analysis concurrently."""
     await asyncio.gather(
         run_bot(),
         smart_alert_loop(),
         auto_learning_task(),
-        daily_report_task()
+        daily_report_task(),
+        daily_macro_report(),
+        pre_event_alerts()
     )
 
 

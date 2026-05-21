@@ -270,8 +270,8 @@ def detect_fibonacci_bounce(df, lookback=30):
     fibo_38_price = swing_high - (fibo_range * 0.382)  # 38.2%
     fibo_61_price = swing_high - (fibo_range * 0.618)  # 61.8%
 
-    # Detect bounce: price near Fibo level (±2 pips tolerance)
-    tolerance = 2
+    # Detect bounce: price near Fibo level (±8 pips tolerance for volatile market)
+    tolerance = 8
     touch_38 = abs(current_price - fibo_38_price) <= tolerance
     touch_61 = abs(current_price - fibo_61_price) <= tolerance
 
@@ -288,8 +288,8 @@ def detect_fibonacci_bounce(df, lookback=30):
         fibo_level = 61.8 if touch_61 else 38.2
         fibo_price = fibo_61_price if touch_61 else fibo_38_price
 
-        # TP at 127.2% extension (above swing high)
-        extension_range = fibo_range * 1.272
+        # TP at 161.8% extension (above swing high) - more aggressive
+        extension_range = fibo_range * 1.618
         tp_extension = swing_high + (extension_range - fibo_range)
 
         direction = 'UP'
@@ -298,8 +298,8 @@ def detect_fibonacci_bounce(df, lookback=30):
         fibo_level = 61.8 if touch_61 else 38.2
         fibo_price = fibo_61_price if touch_61 else fibo_38_price
 
-        # TP at 127.2% extension (below swing low)
-        extension_range = fibo_range * 1.272
+        # TP at 161.8% extension (below swing low) - more aggressive
+        extension_range = fibo_range * 1.618
         tp_extension = swing_low - (extension_range - fibo_range)
 
         direction = 'DOWN'

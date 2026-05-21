@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Scalp setup trên M5/M15 - dùng support/resistance + pivot + MA89."""
+"""Scalp setup trên M5/M15 - dùng support/resistance + pivot + MA89 + Fibonacci."""
 import logging
 from fetch import fetch_symbol
 from indicators import IndicatorSet
+from market_structure import detect_fibonacci_bounce, detect_fibo_rejection_confluence
 from datetime import datetime
 import numpy as np
 
@@ -159,12 +160,54 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
     entry = None
     signal_type = None
     confirmation = None
+    fibo_info = None  # Track Fibonacci signals separately
 
     touch_threshold = 2  # within 2 pips
 
+    # ===== FIBONACCI SIGNALS (Priority - check first) =====
+    # Fibonacci retracement bounce detection (38.2% + 61.8%)
+    fibo_bounce = detect_fibonacci_bounce(df, lookback=30)
+    if fibo_bounce:
+        entry = fibo_bounce['entry']
+        fibo_info = fibo_bounce
+
+        # Check for rejection candle confluence (high quality setup)
+        confluence = detect_fibo_rejection_confluence(df, fibo_bounce, lookback_rejection=3)
+        has_confluence = confluence['has_confluence']
+
+        if fibo_bounce['direction'] == 'UP':
+            if has_confluence:
+                # Fibo + rejection = high quality
+                if fibo_bounce['fibo_level'] == 38.2:
+                    signal_type = "BUY_FIBO_38_REJECTION"
+                else:
+                    signal_type = "BUY_FIBO_61_REJECTION"
+            else:
+                # Fibo solo
+                if fibo_bounce['fibo_level'] == 38.2:
+                    signal_type = "BUY_FIBO_38_BOUNCE"
+                else:
+                    signal_type = "BUY_FIBO_61_BOUNCE"
+        else:  # DOWN
+            if has_confluence:
+                # Fibo + rejection = high quality
+                if fibo_bounce['fibo_level'] == 38.2:
+                    signal_type = "SELL_FIBO_38_REJECTION"
+                else:
+                    signal_type = "SELL_FIBO_61_REJECTION"
+            else:
+                # Fibo solo
+                if fibo_bounce['fibo_level'] == 38.2:
+                    signal_type = "SELL_FIBO_38_BOUNCE"
+                else:
+                    signal_type = "SELL_FIBO_61_BOUNCE"
+
+        # Store confluence info for learning boost
+        fibo_info['confluence'] = confluence
+
     # ===== BUY SIGNALS =====
     # 1. Bounce from support/MA89/S1
-    if current_price <= ma89 + touch_threshold and current_price >= ma89 - touch_threshold:
+    if not entry and current_price <= ma89 + touch_threshold and current_price >= ma89 - touch_threshold:
         if current_price > ma89 - touch_threshold:
             entry = current_price
             signal_type = "BUY_MA89_BOUNCE"
@@ -214,15 +257,26 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
     if not entry:
         return None
 
-    # Tính SL/TP (Phase 5: Dynamic based on ATR)
-    # SL = entry ± 1×ATR, TP = entry ± 2×ATR (risk:reward = 1:2)
+    # Tính SL/TP
+    # Fibonacci signals: use extension for TP, support/resistance for SL
+    # ATR signals: use ATR-based SL/TP (1:2 ratio)
     atr = cons_info['atr']
-    if "BUY" in signal_type:
-        sl = entry - atr  # SL = entry - 1×ATR
-        tp = entry + (2 * atr)  # TP = entry + 2×ATR
-    else:  # SELL
-        sl = entry + atr
-        tp = entry - (2 * atr)
+
+    if fibo_info:
+        # Fibonacci: TP = extension level, SL = opposite side of swing
+        tp = fibo_info['tp_extension']
+        if "BUY" in signal_type:
+            sl = fibo_info['swing_low'] - atr  # SL below swing low
+        else:  # SELL
+            sl = fibo_info['swing_high'] + atr  # SL above swing high
+    else:
+        # ATR-based: SL = entry ± 1×ATR, TP = entry ± 2×ATR
+        if "BUY" in signal_type:
+            sl = entry - atr
+            tp = entry + (2 * atr)
+        else:  # SELL
+            sl = entry + atr
+            tp = entry - (2 * atr)
 
     # H1 confirmation string
     if h1_trend:
@@ -256,7 +310,8 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
         'volume_is_strong': vol_info['is_strong'],
         'is_consolidating': cons_info['is_consolidating'],
         'atr': cons_info['atr'],
-        'atr_avg': cons_info['atr_avg']
+        'atr_avg': cons_info['atr_avg'],
+        'fibo_info': fibo_info  # Fibonacci data if detected
     }
 
 

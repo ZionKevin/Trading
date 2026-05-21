@@ -232,6 +232,163 @@ def calculate_optimal_sl_tp(entry_price, direction, symbol, target_risk_dollars=
         return None
 
 
+def detect_fibonacci_bounce(df, lookback=30):
+    """Detect Fibonacci retracement bounce (38.2% + 61.8%).
+
+    Finds swing high/low, calculates Fibo levels, checks if price bounced off them.
+
+    Returns:
+        dict: {
+            'fibo_level': float (38.2 or 61.8),
+            'fibo_price': float (exact Fibo level price),
+            'swing_high': float,
+            'swing_low': float,
+            'direction': 'UP' (bounce from support) or 'DOWN' (bounce from resistance),
+            'entry': float (current price),
+            'tp_extension': float (127.2% Fibo extension)
+        }
+        or None if no valid bounce detected
+    """
+    if len(df) < lookback:
+        return None
+
+    recent = df.tail(lookback)
+    highs = recent['High'].values
+    lows = recent['Low'].values
+
+    # Find swing high/low
+    swing_high = max(highs)
+    swing_low = min(lows)
+
+    if swing_high == swing_low:
+        return None
+
+    current_price = df['Close'].iloc[-1]
+
+    # Calculate Fibo retracement levels (100% = swing range)
+    fibo_range = swing_high - swing_low
+    fibo_38_price = swing_high - (fibo_range * 0.382)  # 38.2%
+    fibo_61_price = swing_high - (fibo_range * 0.618)  # 61.8%
+
+    # Detect bounce: price near Fibo level (±2 pips tolerance)
+    tolerance = 2
+    touch_38 = abs(current_price - fibo_38_price) <= tolerance
+    touch_61 = abs(current_price - fibo_61_price) <= tolerance
+
+    if not (touch_38 or touch_61):
+        return None
+
+    # Determine direction (BUY = bounce from low, SELL = bounce from high)
+    # If current price > middle of range → bouncing from support (BUY)
+    # If current price < middle of range → bouncing from resistance (SELL)
+    middle = (swing_high + swing_low) / 2
+
+    if current_price > middle:
+        # BUY bounce from support (lower Fibo level)
+        fibo_level = 61.8 if touch_61 else 38.2
+        fibo_price = fibo_61_price if touch_61 else fibo_38_price
+
+        # TP at 127.2% extension (above swing high)
+        extension_range = fibo_range * 1.272
+        tp_extension = swing_high + (extension_range - fibo_range)
+
+        direction = 'UP'
+    else:
+        # SELL bounce from resistance (higher Fibo level)
+        fibo_level = 61.8 if touch_61 else 38.2
+        fibo_price = fibo_61_price if touch_61 else fibo_38_price
+
+        # TP at 127.2% extension (below swing low)
+        extension_range = fibo_range * 1.272
+        tp_extension = swing_low - (extension_range - fibo_range)
+
+        direction = 'DOWN'
+
+    return {
+        'fibo_level': fibo_level,
+        'fibo_price': fibo_price,
+        'swing_high': swing_high,
+        'swing_low': swing_low,
+        'direction': direction,
+        'entry': current_price,
+        'tp_extension': tp_extension
+    }
+
+
+def detect_fibo_rejection_confluence(df, fibo_info, lookback_rejection=3):
+    """Detect confluence: Fibo bounce + rejection candle (high wick bounce).
+
+    Checks if recent candles show rejection pattern at Fibo level.
+    High wick ratio = strong rejection from level = high quality setup.
+
+    Args:
+        df: DataFrame with OHLCV
+        fibo_info: From detect_fibonacci_bounce()
+        lookback_rejection: Check last N candles for rejection (default 3)
+
+    Returns:
+        dict: {
+            'has_confluence': bool,
+            'rejection_strength': 0-100,
+            'rejection_type': 'BULLISH_REJECTION' or 'BEARISH_REJECTION' or None,
+            'wick_ratio': float
+        }
+    """
+    if not fibo_info or len(df) < lookback_rejection + 1:
+        return {'has_confluence': False, 'rejection_strength': 0, 'rejection_type': None, 'wick_ratio': 0}
+
+    recent = df.tail(lookback_rejection)
+    has_rejection = False
+    max_wick_ratio = 0
+    rejection_type = None
+
+    for i in range(len(recent)):
+        candle = recent.iloc[i]
+        open_p = candle['Open']
+        close_p = candle['Close']
+        high_p = candle['High']
+        low_p = candle['Low']
+
+        # Calculate wick size
+        if close_p > open_p:  # Bullish candle
+            upper_wick = high_p - close_p
+            lower_wick = open_p - low_p
+            body = close_p - open_p
+        else:  # Bearish candle
+            upper_wick = high_p - open_p
+            lower_wick = close_p - low_p
+            body = open_p - close_p
+
+        if body > 0:
+            wick_ratio = max(upper_wick, lower_wick) / body
+        else:
+            wick_ratio = 0
+
+        # Check for strong wick rejection (ratio > 1.5)
+        if wick_ratio > 1.5:
+            max_wick_ratio = max(max_wick_ratio, wick_ratio)
+            has_rejection = True
+
+            # Determine rejection type
+            if fibo_info['direction'] == 'UP':  # BUY setup
+                # Bullish rejection = close_p > open_p with lower wick at support
+                if close_p > open_p and lower_wick > upper_wick:
+                    rejection_type = 'BULLISH_REJECTION'
+            else:  # SELL setup
+                # Bearish rejection = close_p < open_p with upper wick at resistance
+                if close_p < open_p and upper_wick > lower_wick:
+                    rejection_type = 'BEARISH_REJECTION'
+
+    rejection_strength = min(100, int(max_wick_ratio * 25)) if has_rejection else 0
+
+    return {
+        'has_confluence': has_rejection,
+        'rejection_strength': rejection_strength,
+        'rejection_type': rejection_type,
+        'wick_ratio': max_wick_ratio
+    }
+
+
 def format_market_structure_alert(symbol, setup, rejection_info, support_info, m15_df):
     """Format alert with market structure context."""
     msg = f"\n[MARKET STRUCTURE ANALYSIS]\n"

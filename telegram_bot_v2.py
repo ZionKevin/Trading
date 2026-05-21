@@ -182,16 +182,24 @@ async def smart_alert_loop():
             else:
                 action = f"Enter at {best_setup['entry']:.2f}"
 
+            # Boost confidence for Fibo+rejection confluence (high quality setup)
+            final_confidence = signal_confidence
+            confluence_label = ""
+            if best_setup.get('fibo_info') and best_setup['fibo_info'].get('confluence'):
+                if best_setup['fibo_info']['confluence'].get('has_confluence'):
+                    final_confidence = min(100, signal_confidence + 15)  # +15 confidence boost
+                    confluence_label = " 🎯 Confluence"
+
             # Track alert FIRST to get ID
             alert_id = post_alert(best_sym, best_tf, best_setup['signal'], best_setup['entry'],
-                                 best_setup['sl'], best_setup['tp'], h1_trend, signal_confidence, session_name)
+                                 best_setup['sl'], best_setup['tp'], h1_trend, final_confidence, session_name)
 
             msg = f"🔔 Alert #{alert_id}\n"
             msg += f"{emoji} {best_tf.upper()} {best_sym} — {dir_text}\n"
             msg += f"Action: {action}\n"
             msg += f"SL {best_setup['sl']:.0f} | TP {best_setup['tp']:.0f}\n"
-            msg += f"Signal: {best_setup['signal']}\n"
-            msg += f"Conf: {signal_confidence:.0f}% | H1: {h1_trend} | Session: {session_name}\n"
+            msg += f"Signal: {best_setup['signal']}{confluence_label}\n"
+            msg += f"Conf: {final_confidence:.0f}% | H1: {h1_trend} | Session: {session_name}\n"
             msg += f"Report: /tp {alert_id} or /sl {alert_id} or /exit {alert_id} <price>"
 
             await send_reply(CHANNEL_ID, msg)

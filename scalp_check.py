@@ -263,14 +263,19 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
     atr = cons_info['atr']
 
     if fibo_info:
-        # Fibonacci: TP = extension level, SL = opposite side of swing
-        tp = fibo_info['tp_extension']
+        # Fibonacci: Use TP2 (161.8%) as primary, TP1/TP3 for partial targets
+        tp = fibo_info['tp2']  # Primary TP for learning (161.8%)
+        tp1 = fibo_info['tp1']  # Conservative (127.2%)
+        tp3 = fibo_info['tp3']  # Aggressive (200%)
+
         if "BUY" in signal_type:
             sl = fibo_info['swing_low'] - atr  # SL below swing low
         else:  # SELL
             sl = fibo_info['swing_high'] + atr  # SL above swing high
     else:
         # ATR-based: SL = entry ± 1×ATR, TP = entry ± 2×ATR
+        tp1 = None
+        tp3 = None
         if "BUY" in signal_type:
             sl = entry - atr
             tp = entry + (2 * atr)
@@ -293,7 +298,9 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
     return {
         'entry': entry,
         'sl': sl,
-        'tp': tp,
+        'tp': tp,  # Primary TP (TP2 for Fibo, 2×ATR for ATR-based)
+        'tp1': tp1,  # TP1: 127.2% extension (Fibo only)
+        'tp3': tp3,  # TP3: 200% extension (Fibo only)
         'signal': signal_type,
         'ma89': ma89,
         'support': sr['supports'][-1] if sr['supports'] else None,

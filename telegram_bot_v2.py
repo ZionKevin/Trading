@@ -197,7 +197,14 @@ async def smart_alert_loop():
             msg = f"🔔 Alert #{alert_id}\n"
             msg += f"{emoji} {best_tf.upper()} {best_sym} — {dir_text}\n"
             msg += f"Action: {action}\n"
-            msg += f"SL {best_setup['sl']:.0f} | TP {best_setup['tp']:.0f}\n"
+            msg += f"SL {best_setup['sl']:.0f}\n"
+
+            # Show TP levels (3 for Fibo, 1 for ATR-based)
+            if best_setup.get('tp1') and best_setup.get('tp3'):
+                msg += f"TP1 {best_setup['tp1']:.0f} | TP2 {best_setup['tp']:.0f} | TP3 {best_setup['tp3']:.0f}\n"
+            else:
+                msg += f"TP {best_setup['tp']:.0f}\n"
+
             msg += f"Signal: {best_setup['signal']}{confluence_label}\n"
             msg += f"Conf: {final_confidence:.0f}% | H1: {h1_trend} | Session: {session_name}\n"
             msg += f"Report: /tp {alert_id} or /sl {alert_id} or /exit {alert_id} <price>"

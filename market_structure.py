@@ -288,9 +288,13 @@ def detect_fibonacci_bounce(df, lookback=30):
         fibo_level = 61.8 if touch_61 else 38.2
         fibo_price = fibo_61_price if touch_61 else fibo_38_price
 
-        # TP at 161.8% extension (above swing high) - more aggressive
-        extension_range = fibo_range * 1.618
-        tp_extension = swing_high + (extension_range - fibo_range)
+        # 3 TP levels (conservative → aggressive)
+        # TP1: 127.2% extension (lock early profit)
+        # TP2: 161.8% extension (golden ratio, medium target)
+        # TP3: 200% extension (max target if trend continues)
+        tp1 = swing_high + (fibo_range * 1.272 - fibo_range)
+        tp2 = swing_high + (fibo_range * 1.618 - fibo_range)
+        tp3 = swing_high + (fibo_range * 2.0 - fibo_range)
 
         direction = 'UP'
     else:
@@ -298,9 +302,10 @@ def detect_fibonacci_bounce(df, lookback=30):
         fibo_level = 61.8 if touch_61 else 38.2
         fibo_price = fibo_61_price if touch_61 else fibo_38_price
 
-        # TP at 161.8% extension (below swing low) - more aggressive
-        extension_range = fibo_range * 1.618
-        tp_extension = swing_low - (extension_range - fibo_range)
+        # 3 TP levels (same ratios, inverted direction)
+        tp1 = swing_low - (fibo_range * 1.272 - fibo_range)
+        tp2 = swing_low - (fibo_range * 1.618 - fibo_range)
+        tp3 = swing_low - (fibo_range * 2.0 - fibo_range)
 
         direction = 'DOWN'
 
@@ -311,7 +316,9 @@ def detect_fibonacci_bounce(df, lookback=30):
         'swing_low': swing_low,
         'direction': direction,
         'entry': current_price,
-        'tp_extension': tp_extension
+        'tp1': tp1,  # 127.2% - conservative
+        'tp2': tp2,  # 161.8% - golden ratio (primary)
+        'tp3': tp3   # 200% - aggressive
     }
 
 

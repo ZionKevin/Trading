@@ -237,19 +237,8 @@ async def handle_command(chat_id, text):
             await send_reply(chat_id, reply)
         elif "/enter" in cmd:
             logger.info(f"/enter from {chat_id}")
-            # Format: /enter SIGNAL_NAME ENTRY_PRICE
-            parts = text.split()
-            if len(parts) >= 3:
-                signal = parts[1]
-                try:
-                    entry_price = float(parts[2])
-                    trade = log_entry(signal, entry_price)
-                    reply = f"TRADE OPENED\nID: {trade['id']}\nSignal: {signal}\nEntry: {entry_price:.2f}"
-                    await send_reply(chat_id, reply)
-                except ValueError:
-                    await send_reply(chat_id, "Invalid price. Format: /enter SIGNAL_NAME PRICE")
-            else:
-                await send_reply(chat_id, "Format: /enter BUY_PIVOT_S1_BOUNCE 4550.00")
+            reply = "Bot auto-scans every 5 min (Phase 6 one-at-a-time). No manual /enter needed.\nJust wait for 🔔 Alert or use /open to see pending."
+            await send_reply(chat_id, reply)
         elif "/close" in cmd:
             logger.info(f"/close from {chat_id}")
             # Format: /close EXIT_PRICE (auto-close last open trade)

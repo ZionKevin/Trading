@@ -190,9 +190,10 @@ async def smart_alert_loop():
                     final_confidence = min(100, signal_confidence + 15)  # +15 confidence boost
                     confluence_label = " 🎯 Confluence"
 
-            # Track alert FIRST to get ID
+            # Track alert FIRST to get ID (with TP levels if Fibo)
             alert_id = post_alert(best_sym, best_tf, best_setup['signal'], best_setup['entry'],
-                                 best_setup['sl'], best_setup['tp'], h1_trend, final_confidence, session_name)
+                                 best_setup['sl'], best_setup['tp'], h1_trend, final_confidence, session_name,
+                                 tp1=best_setup.get('tp1'), tp3=best_setup.get('tp3'))
 
             msg = f"🔔 Alert #{alert_id}\n"
             msg += f"{emoji} {best_tf.upper()} {best_sym} — {dir_text}\n"
@@ -310,20 +311,26 @@ async def handle_command(chat_id, text):
             await send_reply(chat_id, reply)
         elif "/tp" in cmd:
             logger.info(f"/tp from {chat_id}")
-            # Format: /tp <alert_id> (mark as TP hit)
+            # Format: /tp <alert_id> [tp_level] (mark as TP hit)
+            # tp_level: 1 (127.2%), 2 (161.8%), 3 (200%), or omit for primary
             parts = text.split()
             if len(parts) >= 2:
                 try:
                     alert_id = int(parts[1])
-                    closed = close_alert(alert_id, "TP")
+                    tp_level = None
+                    if len(parts) >= 3:
+                        tp_level = int(parts[2])  # Which TP hit: 1, 2, or 3
+
+                    closed = close_alert(alert_id, "TP", tp_level=tp_level)
                     if closed:
-                        reply = f"Alert #{alert_id} closed: TP hit! +${200:.0f} profit"
+                        tp_label = f" TP{tp_level}" if tp_level else ""
+                        reply = f"Alert #{alert_id} closed:{tp_label} TP hit! +${abs(closed['pnl']):.0f} profit"
                     else:
                         reply = f"Alert #{alert_id} not found"
-                except:
-                    reply = "Format: /tp <alert_id>"
+                except ValueError:
+                    reply = "Format: /tp <alert_id> [1|2|3]"
             else:
-                reply = "Format: /tp <alert_id>"
+                reply = "Format: /tp <alert_id> [1|2|3]"
             await send_reply(chat_id, reply)
         elif "/sl" in cmd:
             logger.info(f"/sl from {chat_id}")

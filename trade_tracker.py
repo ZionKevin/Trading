@@ -41,8 +41,13 @@ def save_tracker(data):
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def post_alert(symbol, timeframe, signal, entry, sl, tp, h1_trend, confidence, session):
-    """Record a posted alert."""
+def post_alert(symbol, timeframe, signal, entry, sl, tp, h1_trend, confidence, session, tp1=None, tp3=None):
+    """Record a posted alert.
+
+    Args:
+        tp1: TP1 (127.2% extension for Fibo, optional)
+        tp3: TP3 (200% extension for Fibo, optional)
+    """
     tracker = load_tracker()
 
     alert = {
@@ -52,13 +57,16 @@ def post_alert(symbol, timeframe, signal, entry, sl, tp, h1_trend, confidence, s
         'signal': signal,
         'entry': entry,
         'sl': sl,
-        'tp': tp,
+        'tp': tp,  # Primary TP (TP2 for Fibo, 2×ATR for ATR-based)
+        'tp1': tp1,  # TP1 (127.2%) for Fibo only
+        'tp3': tp3,  # TP3 (200%) for Fibo only
         'h1_trend': h1_trend,
         'confidence': confidence,
         'session': session,
         'posted_at': datetime.now().isoformat(),
         'status': 'PENDING',  # PENDING, TP_HIT, SL_HIT
-        'result': None  # 'WIN' or 'LOSS'
+        'result': None,  # 'WIN' or 'LOSS'
+        'tp_level': None  # Which TP hit: 1, 2, or 3
     }
 
     tracker['posted_alerts'].append(alert)
@@ -76,13 +84,14 @@ def post_alert(symbol, timeframe, signal, entry, sl, tp, h1_trend, confidence, s
     return alert['id']
 
 
-def close_alert(alert_id, result, exit_price=None):
+def close_alert(alert_id, result, exit_price=None, tp_level=None):
     """Mark alert as TP, SL, or manual exit.
 
     Args:
         alert_id: alert ID
         result: 'TP', 'SL', or 'EXIT'
         exit_price: actual exit price (for manual exits)
+        tp_level: which TP hit (1, 2, or 3) - for TP result only
     """
     tracker = load_tracker()
 
@@ -94,8 +103,17 @@ def close_alert(alert_id, result, exit_price=None):
             if result == 'TP':
                 alert['status'] = 'TP_HIT'
                 alert['result'] = 'WIN'
-                alert['exit_price'] = alert['tp']
-                pnl = (alert['tp'] - alert['entry']) * risk_per_pip
+                alert['tp_level'] = tp_level if tp_level else 2  # Default to TP2
+
+                # Use appropriate TP level for exit price
+                if tp_level == 1 and alert.get('tp1'):
+                    alert['exit_price'] = alert['tp1']
+                elif tp_level == 3 and alert.get('tp3'):
+                    alert['exit_price'] = alert['tp3']
+                else:
+                    alert['exit_price'] = alert['tp']  # Default to TP2
+
+                pnl = (alert['exit_price'] - alert['entry']) * risk_per_pip
             elif result == 'SL':
                 alert['status'] = 'SL_HIT'
                 alert['result'] = 'LOSS'

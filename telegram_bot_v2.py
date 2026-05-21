@@ -180,11 +180,12 @@ async def smart_alert_loop():
             entry = best_setup['entry']
 
             if "FIBO" in signal:
-                # Fibonacci: show which level to buy/sell at
-                if "38" in signal:
-                    action = f"Chờ {dir_text} ở Fibo 38.2% ({entry:.0f})"
-                else:  # 61.8
-                    action = f"Chờ {dir_text} ở Fibo 61.8% ({entry:.0f})"
+                # Fibonacci: show trend + which level to test
+                # Uptrend (BUY): test Fibo on the way up
+                # Downtrend (SELL): test Fibo on the way down
+                trend_text = "nhịp tăng" if is_buy else "nhịp giảm"
+                level_text = "38.2%" if "38" in signal else "61.8%"
+                action = f"Chờ giá test Fibo {level_text} của {trend_text} và {dir_text}"
             elif "SUPPORT" in signal and "BREAK" in signal:
                 # Support BREAK: break below support, then buy (counter-trend risky)
                 action = f"Chờ giá break hỗ trợ {entry:.0f}, sau đó {dir_text}"

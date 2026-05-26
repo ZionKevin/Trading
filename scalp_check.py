@@ -268,10 +268,16 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
         tp1 = fibo_info['tp1']  # Conservative (127.2%)
         tp3 = fibo_info['tp3']  # Aggressive (200%)
 
+        # SL: lấy CÁI GẦN ENTRY HƠN giữa swing-based và ATR-based cap (1.5×ATR ≈ 100-150 pips XAU)
+        # Tránh trường hợp swing range quá rộng → SL xa entry quá → RRR kém
         if "BUY" in signal_type:
-            sl = fibo_info['swing_low'] - atr  # SL below swing low
+            fibo_sl = fibo_info['swing_low'] - atr  # SL kỹ thuật (dưới swing low)
+            atr_sl = entry - 1.5 * atr               # SL cap (1.3×ATR từ entry ≈ 100 pips)
+            sl = max(fibo_sl, atr_sl)                # Chọn cái gần entry hơn (SL nhỏ)
         else:  # SELL
-            sl = fibo_info['swing_high'] + atr  # SL above swing high
+            fibo_sl = fibo_info['swing_high'] + atr  # SL kỹ thuật (trên swing high)
+            atr_sl = entry + 1.5 * atr               # SL cap (1.3×ATR từ entry ≈ 100 pips)
+            sl = min(fibo_sl, atr_sl)                # Chọn cái gần entry hơn (SL nhỏ)
     else:
         # ATR-based: SL = entry ± 1×ATR, TP = entry ± 2×ATR
         tp1 = None

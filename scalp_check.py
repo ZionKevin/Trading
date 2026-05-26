@@ -268,16 +268,26 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
         tp1 = fibo_info['tp1']  # Conservative (127.2%)
         tp3 = fibo_info['tp3']  # Aggressive (200%)
 
-        # SL: lấy CÁI GẦN ENTRY HƠN giữa swing-based và ATR-based cap (1.5×ATR ≈ 100-150 pips XAU)
-        # Tránh trường hợp swing range quá rộng → SL xa entry quá → RRR kém
+        # SL range per-symbol (USD): clamp distance trong khoảng hợp lý cho scalp
+        # XAU 10-15$ ≈ 100-150 pips; BTC 200-500$; ETH 30-70$; etc.
+        SL_RANGE_USD = {
+            'XAU': (10, 15),
+            'BTC': (200, 500),
+            'ETH': (30, 70),
+            'XAG': (0.2, 0.5),
+            'USOIL': (0.5, 1.0),
+            'DXY': (0.3, 0.7),
+        }
+        sl_min, sl_max = SL_RANGE_USD.get(symbol, (1.0 * atr, 2.5 * atr))
+
         if "BUY" in signal_type:
-            fibo_sl = fibo_info['swing_low'] - atr  # SL kỹ thuật (dưới swing low)
-            atr_sl = entry - 1.5 * atr               # SL cap (1.3×ATR từ entry ≈ 100 pips)
-            sl = max(fibo_sl, atr_sl)                # Chọn cái gần entry hơn (SL nhỏ)
+            fibo_distance = entry - (fibo_info['swing_low'] - atr)   # Distance kỹ thuật
+            sl_distance = max(sl_min, min(fibo_distance, sl_max))    # Clamp trong range
+            sl = entry - sl_distance
         else:  # SELL
-            fibo_sl = fibo_info['swing_high'] + atr  # SL kỹ thuật (trên swing high)
-            atr_sl = entry + 1.5 * atr               # SL cap (1.3×ATR từ entry ≈ 100 pips)
-            sl = min(fibo_sl, atr_sl)                # Chọn cái gần entry hơn (SL nhỏ)
+            fibo_distance = (fibo_info['swing_high'] + atr) - entry
+            sl_distance = max(sl_min, min(fibo_distance, sl_max))
+            sl = entry + sl_distance
     else:
         # ATR-based: SL = entry ± 1×ATR, TP = entry ± 2×ATR
         tp1 = None

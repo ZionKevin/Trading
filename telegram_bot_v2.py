@@ -156,55 +156,76 @@ async def smart_alert_loop():
             session_info = get_current_session(current_hour_utc)
             session_name = session_info['session']
 
+            # Default signals khi chưa có learning data (bootstrap mode)
+            DEFAULT_SIGNALS = [
+                'BUY_FIBO_38_BOUNCE', 'SELL_FIBO_38_BOUNCE',
+                'BUY_FIBO_61_BOUNCE', 'SELL_FIBO_61_BOUNCE',
+                'BUY_FIBO_38_REJECTION', 'SELL_FIBO_38_REJECTION',
+                'BUY_FIBO_61_REJECTION', 'SELL_FIBO_61_REJECTION',
+                'BUY_SUPPORT_BOUNCE', 'SELL_RESISTANCE_BOUNCE',
+                'BUY_PIVOT_S1_BOUNCE', 'SELL_PIVOT_R1_BOUNCE',
+                'BUY_MA89_BOUNCE', 'SELL_MA89_BOUNCE',
+                'BUY_TRENDLINE_BREAKUP', 'SELL_TRENDLINE_BREAKDN',
+            ]
+
             # Get BEST signal (highest win rate from top 3)
             top_signals = get_top_signals(limit=3)
             if not top_signals:
-                logger.info("[SKIP] No qualified signals (need >=50% WR and >=5 trades)")
-                await asyncio.sleep(300)
-                continue
+                # Bootstrap: scan tất cả default signals khi chưa có learning data
+                top_signals = DEFAULT_SIGNALS
+                logger.info(f"[BOOTSTRAP] No learning data — scanning {len(DEFAULT_SIGNALS)} default signals")
 
-            best_signal = top_signals[0]  # Top signal by win rate
-            signal_confidence = get_signal_confidence(best_signal)
-            logger.info(f"[SCAN] Best signal: {best_signal} (conf {signal_confidence:.0f}%)")
-
-            # Scan all symbols for this signal
+            # Loop qua từng signal trong top_signals, dừng khi tìm thấy setup
             best_setup = None
             best_sym = None
             best_tf = None
+            best_signal = None
+            signal_confidence = 0
 
-            for sym in symbols:
-                h1_trend = await get_h1_trend(sym)
-                is_buy = "BUY" in best_signal
-                trend_aligned = (is_buy and h1_trend == "UP") or (not is_buy and h1_trend == "DOWN")
+            for candidate_signal in top_signals:
+                candidate_conf = get_signal_confidence(candidate_signal)
+                is_buy = "BUY" in candidate_signal
 
-                if not trend_aligned:
-                    continue
-
-                # Check session skip rule (C+D)
-                skip_session, _ = should_skip_session(current_hour_utc, signal_confidence)
+                # Check session skip rule
+                skip_session, _ = should_skip_session(current_hour_utc, candidate_conf)
                 if skip_session:
                     continue
 
-                # Check M5
-                setup_m5 = check_symbol_setup(sym, "5m")
-                if setup_m5 and setup_m5['signal'] == best_signal and setup_m5['volume_is_strong']:
-                    best_setup = setup_m5
-                    best_sym = sym
-                    best_tf = "5m"
-                    break  # Found best_signal on M5, use it
+                # Scan all symbols for this signal
+                for sym in symbols:
+                    h1_trend = await get_h1_trend(sym)
+                    trend_aligned = (is_buy and h1_trend == "UP") or (not is_buy and h1_trend == "DOWN")
+                    if not trend_aligned:
+                        continue
 
-                # Check M15 if no M5 match
-                setup_m15 = check_symbol_setup(sym, "15m")
-                if setup_m15 and setup_m15['signal'] == best_signal and setup_m15['volume_is_strong']:
-                    best_setup = setup_m15
-                    best_sym = sym
-                    best_tf = "15m"
-                    # Don't break; keep searching M5 across other symbols
+                    # Check M5
+                    setup_m5 = check_symbol_setup(sym, "5m")
+                    if setup_m5 and setup_m5['signal'] == candidate_signal and setup_m5['volume_is_strong']:
+                        best_setup = setup_m5
+                        best_sym = sym
+                        best_tf = "5m"
+                        best_signal = candidate_signal
+                        signal_confidence = candidate_conf
+                        break
+
+                    # Check M15
+                    setup_m15 = check_symbol_setup(sym, "15m")
+                    if setup_m15 and setup_m15['signal'] == candidate_signal and setup_m15['volume_is_strong']:
+                        best_setup = setup_m15
+                        best_sym = sym
+                        best_tf = "15m"
+                        best_signal = candidate_signal
+                        signal_confidence = candidate_conf
+
+                if best_setup:
+                    break  # Found a setup, stop scanning more signals
 
             if not best_setup:
-                logger.info(f"[SKIP] {best_signal} not found with good setup this cycle")
+                logger.info(f"[SKIP] No good setup found across {len(top_signals)} signals × {len(symbols)} symbols this cycle")
                 await asyncio.sleep(300)
                 continue
+
+            logger.info(f"[SCAN] Found {best_signal} on {best_sym} {best_tf} (conf {signal_confidence:.0f}%)")
 
             # Found best_setup, post it
             h1_trend = await get_h1_trend(best_sym)

@@ -289,15 +289,26 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
             sl_distance = max(sl_min, min(fibo_distance, sl_max))
             sl = entry + sl_distance
     else:
-        # ATR-based: SL = entry ± 1×ATR, TP = entry ± 2×ATR
+        # ATR-based: SL clamp theo per-symbol range, TP = SL × 2 (RRR 1:2)
         tp1 = None
         tp3 = None
+        SL_RANGE_USD = {
+            'XAU': (10, 15),
+            'BTC': (200, 500),
+            'ETH': (30, 70),
+            'XAG': (0.2, 0.5),
+            'USOIL': (0.5, 1.0),
+            'DXY': (0.3, 0.7),
+        }
+        sl_min, sl_max = SL_RANGE_USD.get(symbol, (1.0 * atr, 2.5 * atr))
+        sl_distance = max(sl_min, min(1.5 * atr, sl_max))   # Clamp ATR-based SL trong range
+
         if "BUY" in signal_type:
-            sl = entry - atr
-            tp = entry + (2 * atr)
+            sl = entry - sl_distance
+            tp = entry + (2 * sl_distance)                  # RRR 1:2
         else:  # SELL
-            sl = entry + atr
-            tp = entry - (2 * atr)
+            sl = entry + sl_distance
+            tp = entry - (2 * sl_distance)
 
     # H1 confirmation string
     if h1_trend:

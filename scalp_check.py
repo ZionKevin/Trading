@@ -44,7 +44,9 @@ def check_volume_strength(df, lookback=20):
     current_vol = df['Volume'].iloc[-1]
 
     ratio = current_vol / avg_vol if avg_vol > 0 else 0
-    is_strong = ratio > 0.8  # Volume > 80% of average (relax from 1.2 — XAU 5m often quiet)
+    # Forex pairs (XAUUSD=X, XAGUSD=X) có avg_vol = 0 → ratio = 0 → auto-pass filter
+    # Crypto/Futures có volume thật → áp dụng threshold 0.8x (relax từ 1.2x)
+    is_strong = True if avg_vol == 0 else ratio > 0.8
 
     return {
         'avg_volume': avg_vol,

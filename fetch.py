@@ -5,12 +5,14 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 # Symbol mapping: name -> yfinance ticker
+# IMPORTANT: Dùng Forex spot pair (XAUUSD=X) thay vì Futures (GC=F)
+# Futures bị delay 15-30 min trên yfinance free tier → spot pair realtime hơn
 SYMBOLS = {
-    "BTC": "BTC-USD",      # Crypto: support 1h + daily
+    "BTC": "BTC-USD",      # Crypto: realtime
     "ETH": "ETH-USD",
-    "XAU": "GC=F",         # Commodity: daily chủ yếu
-    "XAG": "SI=F",
-    "USOIL": "CL=F",
+    "XAU": "XAUUSD=X",     # Forex Gold Spot (realtime, NOT GC=F futures)
+    "XAG": "XAGUSD=X",     # Forex Silver Spot
+    "USOIL": "CL=F",       # Oil futures (no spot alternative on yfinance)
     "DXY": "DX-Y.NYB",
 }
 

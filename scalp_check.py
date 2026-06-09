@@ -44,7 +44,7 @@ def check_volume_strength(df, lookback=20):
     current_vol = df['Volume'].iloc[-1]
 
     ratio = current_vol / avg_vol if avg_vol > 0 else 0
-    is_strong = ratio > 1.2  # Volume > 120% of average = strong
+    is_strong = ratio > 0.8  # Volume > 80% of average (relax from 1.2 — XAU 5m often quiet)
 
     return {
         'avg_volume': avg_vol,

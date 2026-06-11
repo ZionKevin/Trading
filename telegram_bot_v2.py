@@ -86,7 +86,7 @@ async def check_scalp_setup(timeframe):
 async def get_h1_trend(symbol):
     """Get H1 macro trend: 'UP' if RSI<50, 'DOWN' if RSI>50, else 'NEUTRAL'."""
     try:
-        df_h1 = fetch_symbol(symbol, "1h", 5)
+        df_h1 = await asyncio.to_thread(fetch_symbol, symbol, "1h", 5)
         ind = IndicatorSet(df_h1).calculate_all()
         rsi = ind.latest('rsi')
         if rsi < 50:
@@ -175,6 +175,17 @@ async def smart_alert_loop():
                 top_signals = DEFAULT_SIGNALS
                 logger.info(f"[BOOTSTRAP] No learning data — scanning {len(DEFAULT_SIGNALS)} default signals")
 
+            # Fetch + tính setup MỖI symbol/timeframe ĐÚNG 1 LẦN/cycle. Trước đây
+            # gọi lại theo từng candidate_signal → fetch dư tới ~16× (bootstrap) và
+            # block event loop hàng phút. Giờ cache + offload thread (asyncio.to_thread)
+            # để Telegram /price /m5 vẫn phản hồi trong lúc quét.
+            h1_cache = {}
+            setup_cache = {}
+            for sym in symbols:
+                h1_cache[sym] = await get_h1_trend(sym)
+                setup_cache[(sym, "5m")] = await asyncio.to_thread(check_symbol_setup, sym, "5m")
+                setup_cache[(sym, "15m")] = await asyncio.to_thread(check_symbol_setup, sym, "15m")
+
             # Loop qua từng signal trong top_signals, dừng khi tìm thấy setup
             best_setup = None
             best_sym = None
@@ -191,15 +202,15 @@ async def smart_alert_loop():
                 if skip_session:
                     continue
 
-                # Scan all symbols for this signal
+                # Scan all symbols for this signal (đọc từ cache, KHÔNG fetch lại)
                 for sym in symbols:
-                    h1_trend = await get_h1_trend(sym)
+                    h1_trend = h1_cache[sym]
                     trend_aligned = (is_buy and h1_trend == "UP") or (not is_buy and h1_trend == "DOWN")
                     if not trend_aligned:
                         continue
 
                     # Check M5
-                    setup_m5 = check_symbol_setup(sym, "5m")
+                    setup_m5 = setup_cache[(sym, "5m")]
                     if setup_m5 and setup_m5['signal'] == candidate_signal and setup_m5['volume_is_strong']:
                         best_setup = setup_m5
                         best_sym = sym
@@ -209,7 +220,7 @@ async def smart_alert_loop():
                         break
 
                     # Check M15
-                    setup_m15 = check_symbol_setup(sym, "15m")
+                    setup_m15 = setup_cache[(sym, "15m")]
                     if setup_m15 and setup_m15['signal'] == candidate_signal and setup_m15['volume_is_strong']:
                         best_setup = setup_m15
                         best_sym = sym
@@ -228,7 +239,7 @@ async def smart_alert_loop():
             logger.info(f"[SCAN] Found {best_signal} on {best_sym} {best_tf} (conf {signal_confidence:.0f}%)")
 
             # Found best_setup, post it
-            h1_trend = await get_h1_trend(best_sym)
+            h1_trend = h1_cache[best_sym]
             is_buy = "BUY" in best_setup['signal']
             dir_text = "BUY" if is_buy else "SELL"
             emoji = symbol_emojis.get(best_sym, "📍")
@@ -312,27 +323,27 @@ async def handle_command(chat_id, text):
     try:
         if "/price" in cmd:
             logger.info(f"/price from {chat_id}")
-            reply = check_prices()
+            reply = await asyncio.to_thread(check_prices)
             await send_reply(chat_id, reply)
         elif "/trend" in cmd:
             logger.info(f"/trend from {chat_id}")
-            reply = check_trends()
+            reply = await asyncio.to_thread(check_trends)
             await send_reply(chat_id, reply)
         elif "/status" in cmd:
             logger.info(f"/status from {chat_id}")
-            reply = market_overview()
+            reply = await asyncio.to_thread(market_overview)
             await send_reply(chat_id, reply)
         elif "/h1" in cmd:
             logger.info(f"/h1 from {chat_id}")
-            reply = check_h1_trend()
+            reply = await asyncio.to_thread(check_h1_trend)
             await send_reply(chat_id, reply)
         elif "/m5" in cmd:
             logger.info(f"/m5 from {chat_id}")
-            reply = check_m5_scalp()
+            reply = await asyncio.to_thread(check_m5_scalp)
             await send_reply(chat_id, reply)
         elif "/m15" in cmd:
             logger.info(f"/m15 from {chat_id}")
-            reply = check_m15_scalp()
+            reply = await asyncio.to_thread(check_m15_scalp)
             await send_reply(chat_id, reply)
         elif "/enter" in cmd:
             logger.info(f"/enter from {chat_id}")
@@ -485,7 +496,7 @@ async def handle_command(chat_id, text):
             await send_reply(chat_id, reply)
         elif "/macro" in cmd:
             logger.info(f"/macro from {chat_id}")
-            reply = generate_daily_report(0)
+            reply = await asyncio.to_thread(generate_daily_report, 0)
             await send_reply(chat_id, reply)
     except Exception as e:
         logger.error(f"handle_command error: {e}")

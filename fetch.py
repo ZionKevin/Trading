@@ -22,6 +22,11 @@ if TV_AVAILABLE:
 
 # Fallback yfinance nếu tvDatafeed fail
 import yfinance as yf
+import threading
+
+# Lock bảo vệ _tv: TvDatafeed dùng 1 websocket chung, KHÔNG thread-safe. Cho phép
+# gọi fetch_symbol từ nhiều asyncio.to_thread (alert loop + command) mà không đụng nhau.
+_tv_lock = threading.Lock()
 
 # Symbol mapping TradingView format: (symbol, exchange)
 TV_SYMBOLS = {
@@ -79,8 +84,9 @@ def fetch_symbol(symbol, timeframe="5m", days=7):
             bars_per_day = {"1m": 1440, "5m": 288, "15m": 96, "1h": 24, "1d": 1}.get(timeframe, 288)
             n_bars = min(days * bars_per_day, 5000)
             n_bars = max(n_bars, 120)  # đủ nến cho indicators (MA89 cần ≥89)
-            df = _tv.get_hist(symbol=tv_sym, exchange=tv_exch,
-                              interval=tv_interval, n_bars=n_bars)
+            with _tv_lock:  # serialize truy cập websocket dùng chung
+                df = _tv.get_hist(symbol=tv_sym, exchange=tv_exch,
+                                  interval=tv_interval, n_bars=n_bars)
             if df is not None and not df.empty:
                 # Rename columns to match yfinance format
                 df = df.rename(columns={

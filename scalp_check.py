@@ -29,12 +29,18 @@ def detect_support_resistance(df, lookback=10):
     return {'supports': supports, 'resistances': resistances}
 
 
-def check_volume_strength(df, lookback=20):
+# Chỉ crypto mới có volume thật trên sàn. Forex/CFD spot (XAU, XAG, DXY, USOIL)
+# qua tvDatafeed chỉ có tick-volume (hoặc NaN) → KHÔNG dùng để lọc tín hiệu.
+REAL_VOLUME_SYMBOLS = {"BTC", "ETH"}
+
+
+def check_volume_strength(df, lookback=20, symbol=None):
     """Check if recent volume is stronger than average.
 
     Args:
         df: DataFrame với OHLCV
         lookback: days for average
+        symbol: tên symbol để biết có volume thật hay không (forex/CFD → auto-pass)
 
     Returns:
         dict: {'avg_volume': float, 'current_volume': float, 'ratio': float, 'is_strong': bool}
@@ -43,10 +49,24 @@ def check_volume_strength(df, lookback=20):
     avg_vol = recent['Volume'].mean()
     current_vol = df['Volume'].iloc[-1]
 
-    ratio = current_vol / avg_vol if avg_vol > 0 else 0
-    # Forex pairs (XAUUSD=X, XAGUSD=X) có avg_vol = 0 → ratio = 0 → auto-pass filter
-    # Crypto/Futures có volume thật → áp dụng threshold 0.8x (relax từ 1.2x)
-    is_strong = True if avg_vol == 0 else ratio > 0.8
+    # ratio chỉ để hiển thị; chống chia 0 và NaN
+    if avg_vol and avg_vol > 0 and not np.isnan(avg_vol):
+        ratio = current_vol / avg_vol
+        if np.isnan(ratio):
+            ratio = 0
+    else:
+        ratio = 0
+
+    # Auto-pass volume filter khi:
+    #  (a) symbol không có volume thật (XAU/XAG/DXY/USOIL — chỉ tick volume), HOẶC
+    #  (b) data volume rỗng / = 0 / NaN (tránh câm tín hiệu vĩnh viễn — bug cũ).
+    # Chỉ crypto (BTC/ETH) mới áp ngưỡng 0.8x.
+    no_real_volume = symbol is not None and symbol not in REAL_VOLUME_SYMBOLS
+    avg_unusable = (avg_vol is None) or np.isnan(avg_vol) or (avg_vol <= 0)
+    if no_real_volume or avg_unusable:
+        is_strong = True
+    else:
+        is_strong = ratio > 0.8
 
     return {
         'avg_volume': avg_vol,
@@ -322,7 +342,7 @@ def find_scalp_entry(df, symbol="XAU", h1_df=None):
             confirmation = f"⚠️ H1 {h1_trend} (check confluence)"
 
     # Check volume strength
-    vol_info = check_volume_strength(df, lookback=20)
+    vol_info = check_volume_strength(df, lookback=20, symbol=symbol)
 
     return {
         'entry': entry,

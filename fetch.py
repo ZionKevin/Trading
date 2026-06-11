@@ -1,56 +1,108 @@
 # -*- coding: utf-8 -*-
-"""Fetch OHLCV data từ yfinance cho 6 symbol."""
-import yfinance as yf
-import pandas as pd
-from datetime import datetime, timedelta
+"""Fetch OHLCV data từ TradingView (realtime, không delay)."""
 
-# Symbol mapping: name -> yfinance ticker
-# IMPORTANT: Dùng Forex spot pair (XAUUSD=X) thay vì Futures (GC=F)
-# Futures bị delay 15-30 min trên yfinance free tier → spot pair realtime hơn
-SYMBOLS = {
-    "BTC": "BTC-USD",      # Crypto: realtime
+# Bước 1: import tvDatafeed (chỉ ImportError xảy ra ở đây).
+try:
+    from tvDatafeed import TvDatafeed, Interval
+    TV_AVAILABLE = True
+except ImportError:
+    TV_AVAILABLE = False
+    Interval = None
+
+# Bước 2: khởi tạo TV session RIÊNG. TvDatafeed() mở kết nối mạng/websocket
+# nên có thể ném ConnectionError/RuntimeError... — KHÔNG để lỗi đó làm crash
+# import (nếu không cả bot chết lúc khởi động systemd). Fail → fallback yfinance.
+_tv = None
+if TV_AVAILABLE:
+    try:
+        _tv = TvDatafeed()  # No login = limited but works for major pairs
+    except Exception as e:
+        print(f"[WARN] TvDatafeed init fail: {e} — chuyển sang yfinance fallback")
+        TV_AVAILABLE = False
+
+# Fallback yfinance nếu tvDatafeed fail
+import yfinance as yf
+
+# Symbol mapping TradingView format: (symbol, exchange)
+TV_SYMBOLS = {
+    "BTC":   ("BTCUSD",  "COINBASE"),
+    "ETH":   ("ETHUSD",  "COINBASE"),
+    "XAU":   ("XAUUSD",  "OANDA"),   # Real-time Gold spot
+    "XAG":   ("XAGUSD",  "OANDA"),
+    "USOIL": ("USOIL",   "TVC"),
+    "DXY":   ("DXY",     "TVC"),
+}
+
+# Fallback yfinance symbols
+YF_SYMBOLS = {
+    "BTC": "BTC-USD",
     "ETH": "ETH-USD",
-    "XAU": "XAUUSD=X",     # Forex Gold Spot (realtime, NOT GC=F futures)
-    "XAG": "XAGUSD=X",     # Forex Silver Spot
-    "USOIL": "CL=F",       # Oil futures (no spot alternative on yfinance)
+    "XAU": "GC=F",
+    "XAG": "SI=F",
+    "USOIL": "CL=F",
     "DXY": "DX-Y.NYB",
 }
 
-def fetch_symbol(symbol, timeframe="1d", days=30):
-    """Fetch OHLCV từ yfinance cho 1 symbol.
+# Map timeframe to TV interval
+if TV_AVAILABLE:
+    TV_INTERVALS = {
+        "1m":  Interval.in_1_minute,
+        "5m":  Interval.in_5_minute,
+        "15m": Interval.in_15_minute,
+        "1h":  Interval.in_1_hour,
+        "1d":  Interval.in_daily,
+    }
+else:
+    TV_INTERVALS = {}
+
+
+def fetch_symbol(symbol, timeframe="5m", days=7):
+    """Fetch OHLCV — ưu tiên TradingView (realtime), fallback yfinance.
 
     Args:
         symbol: "BTC", "ETH", "XAU", "XAG", "USOIL", "DXY"
         timeframe: "1m", "5m", "15m", "1h", "1d"
-        days: lấy N ngày gần nhất
+        days: số ngày (chỉ dùng cho yfinance fallback)
 
     Returns:
-        pd.DataFrame: columns ['Open','High','Low','Close','Volume'], index=datetime
+        pd.DataFrame: ['Open','High','Low','Close','Volume'], index=datetime
     """
-    if symbol not in SYMBOLS:
-        raise ValueError(f"Symbol {symbol} không hỗ trợ. Dùng: {list(SYMBOLS.keys())}")
+    if symbol not in TV_SYMBOLS:
+        raise ValueError(f"Symbol {symbol} không hỗ trợ. Dùng: {list(TV_SYMBOLS.keys())}")
 
-    ticker_str = SYMBOLS[symbol]
-    ticker = yf.Ticker(ticker_str)
+    # Try TradingView first (realtime)
+    if TV_AVAILABLE:
+        try:
+            tv_sym, tv_exch = TV_SYMBOLS[symbol]
+            tv_interval = TV_INTERVALS.get(timeframe, Interval.in_5_minute)
+            # n_bars theo timeframe (trước đây *200 luôn → fetch dư ~20 năm daily).
+            bars_per_day = {"1m": 1440, "5m": 288, "15m": 96, "1h": 24, "1d": 1}.get(timeframe, 288)
+            n_bars = min(days * bars_per_day, 5000)
+            n_bars = max(n_bars, 120)  # đủ nến cho indicators (MA89 cần ≥89)
+            df = _tv.get_hist(symbol=tv_sym, exchange=tv_exch,
+                              interval=tv_interval, n_bars=n_bars)
+            if df is not None and not df.empty:
+                # Rename columns to match yfinance format
+                df = df.rename(columns={
+                    'open': 'Open', 'high': 'High', 'low': 'Low',
+                    'close': 'Close', 'volume': 'Volume'
+                })
+                return df
+        except Exception as e:
+            print(f"[WARN] TradingView fetch fail {symbol}: {e}, fallback yfinance")
 
+    # Fallback yfinance — lưu ý XAU→GC=F / XAG→SI=F là futures có thể delay 15-30 min
+    if symbol in ("XAU", "XAG"):
+        print(f"[WARN] {symbol} fallback yfinance ({YF_SYMBOLS[symbol]}) — giá futures có thể delay 15-30 min")
+    ticker = yf.Ticker(YF_SYMBOLS[symbol])
     hist = ticker.history(period=f"{days}d", interval=timeframe)
     if hist.empty:
-        raise ValueError(f"Không fetch được {symbol} ({ticker_str}) {timeframe}")
-
+        raise ValueError(f"Không fetch được {symbol} {timeframe} (cả TV và yfinance fail)")
     return hist
 
 
 def load_multiple(symbols_list, timeframe="1d", days=30):
-    """Load nhiều symbol cùng lúc.
-
-    Args:
-        symbols_list: ["BTC", "ETH", "XAU", ...]
-        timeframe: "1h", "1d", ...
-        days: số ngày
-
-    Returns:
-        dict: {symbol -> df}
-    """
+    """Load nhiều symbol cùng lúc."""
     data = {}
     for sym in symbols_list:
         try:
@@ -62,15 +114,11 @@ def load_multiple(symbols_list, timeframe="1d", days=30):
 
 def load_all_symbols(timeframe="1d", days=30):
     """Load tất cả 6 symbol."""
-    return load_multiple(list(SYMBOLS.keys()), timeframe, days)
+    return load_multiple(list(TV_SYMBOLS.keys()), timeframe, days)
 
 
 if __name__ == "__main__":
-    # Test
-    print("Fetch BTC 1h (7 ngày)...")
-    btc = fetch_symbol("BTC", "1h", 7)
-    print(f"  → {len(btc)} nến, cuối: {btc.index[-1]}, close: ${btc['Close'].iloc[-1]:,.2f}")
-
-    print("Fetch XAU daily (30 ngày)...")
-    xau = fetch_symbol("XAU", "1d", 30)
+    print(f"TradingView available: {TV_AVAILABLE}")
+    print("Fetch XAU 5m (realtime)...")
+    xau = fetch_symbol("XAU", "5m", 1)
     print(f"  → {len(xau)} nến, cuối: {xau.index[-1]}, close: ${xau['Close'].iloc[-1]:,.2f}")

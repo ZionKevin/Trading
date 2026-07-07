@@ -40,10 +40,24 @@ SMC_SIGNALS = [
 
 
 def _fetch_context(symbol, tf):
-    """Fetch 3 khung: H4 (Elliott), H1 (structure), LTF (entry)."""
+    """Fetch 3 khung: H4 (Elliott), H1 (structure), LTF (entry).
+
+    Guard chống LỆCH NGUỒN: nếu 1 khung rớt TradingView và fallback sang yfinance
+    (XAU → GC=F futures lệch ~$20 so với spot), phân tích trộn 2 nguồn sẽ ra
+    structure/TP sai → raise để bỏ vòng quét này thay vì phân tích bậy.
+    """
     df_h4 = fetch_symbol(symbol, "4h", 60)
     df_h1 = fetch_symbol(symbol, "1h", 14)
     df_ltf = fetch_symbol(symbol, tf, 7)
+
+    # Nến đang chạy của cả 3 khung = cùng giá hiện tại → close cuối phải sát nhau
+    closes = [float(df_h4['Close'].iloc[-1]), float(df_h1['Close'].iloc[-1]),
+              float(df_ltf['Close'].iloc[-1])]
+    ref = closes[2]  # LTF là chuẩn
+    if ref > 0 and max(abs(c - ref) / ref for c in closes) > 0.002:  # 0.2%
+        raise ValueError(
+            f"{symbol}: data 3 khung lệch nhau {closes} — nghi trộn nguồn TV/yfinance, bỏ vòng này")
+
     return df_h4, df_h1, df_ltf
 
 

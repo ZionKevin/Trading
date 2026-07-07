@@ -50,8 +50,12 @@ def post_alert(symbol, timeframe, signal, entry, sl, tp, h1_trend, confidence, s
     """
     tracker = load_tracker()
 
+    # ID = max của cả pending + closed (trước đây đếm len(pending)+1 → one-at-a-time
+    # làm pending luôn rỗng lúc post → mọi alert đều là #1)
+    all_ids = ([a.get('id', 0) for a in tracker['posted_alerts']] +
+               [a.get('id', 0) for a in tracker['closed_trades']])
     alert = {
-        'id': len(tracker['posted_alerts']) + 1,
+        'id': (max(all_ids) + 1) if all_ids else 1,
         'symbol': symbol,
         'timeframe': timeframe,
         'signal': signal,

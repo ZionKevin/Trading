@@ -1,0 +1,12 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Runtime data — bot tự ghi lúc chạy, KHÔNG commit (deploy sẽ đè mất data VPS)
+trades.json
+learning.json
+alert_tracker.json
+trading_profile.json
+sessions.json
+daily_report.csv

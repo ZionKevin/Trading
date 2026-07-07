@@ -13,15 +13,17 @@ def get_current_session(hour_utc):
     Returns: {'session': 'ASIAN'/'EUROPEAN'/'AMERICAN'/'OVERLAP', 'hour_utc': hour, 'description': str}
     """
     # UTC times (approximate)
-    if 6 <= hour_utc < 8:
-        return {'session': 'ASIAN', 'hour_utc': hour_utc, 'description': 'Tokyo/Singapore (quiet)', 'volatility': 'LOW'}
+    # Phiên Á thật = 0-8 UTC (7h-15h VN) — trước đây 0-6 bị xếp nhầm OVERNIGHT
+    # nên bot câm cả buổi sáng VN dù thị trường Tokyo/Singapore đang chạy.
+    if 0 <= hour_utc < 8:
+        return {'session': 'ASIAN', 'hour_utc': hour_utc, 'description': 'Tokyo/Singapore', 'volatility': 'LOW'}
     elif 8 <= hour_utc < 14:
         return {'session': 'ASIAN_EUROPEAN_OVERLAP', 'hour_utc': hour_utc, 'description': 'Tokyo/London overlap', 'volatility': 'MEDIUM'}
     elif 14 <= hour_utc < 16:
         return {'session': 'EUROPEAN_AMERICAN_OVERLAP', 'hour_utc': hour_utc, 'description': 'London/New York overlap', 'volatility': 'HIGH'}
     elif 16 <= hour_utc < 22:
         return {'session': 'AMERICAN', 'hour_utc': hour_utc, 'description': 'New York (very active)', 'volatility': 'VERY_HIGH'}
-    else:  # 22-6
+    else:  # 22-0 UTC (5h-7h sáng VN, sau khi NY đóng cửa)
         return {'session': 'OVERNIGHT', 'hour_utc': hour_utc, 'description': 'Quiet overnight', 'volatility': 'VERY_LOW'}
 
 
@@ -48,11 +50,11 @@ def should_skip_session(hour_utc, signal_confidence):
     """Determine if should skip alert based on session + confidence.
 
     Option C Logic:
-    - Asian (6-8 UTC): skip unless confidence >= 75 (very beautiful)
+    - Asian (0-8 UTC = 7h-15h VN): post normally (user đánh phiên Á)
     - Asian-Euro overlap (8-14 UTC): always post (>= 50)
     - Euro-American overlap (14-16 UTC): always post (>= 50)
     - American (16-22 UTC): always post (>= 50)
-    - Overnight (22-6 UTC): skip (dead time)
+    - Overnight (22-0 UTC = 5h-7h sáng VN): skip (dead time sau NY close)
 
     Option D Logic:
     - If hourly data available: skip if win_rate < 45%
@@ -67,14 +69,8 @@ def should_skip_session(hour_utc, signal_confidence):
     hour_win_rate = hour_stats.get('win_rate', 50)
 
     # Option C: Session-based filtering
-    if session == 'ASIAN':
-        # Skip Asian unless beautiful signal (conf >= 75)
-        if signal_confidence >= 75:
-            return False, "Beautiful Asian signal (conf 75+), post anyway"
-        else:
-            return True, f"Asian session quiet, skip (need conf >=75, have {signal_confidence:.0f})"
-
-    elif session == 'OVERNIGHT':
+    # ASIAN: post bình thường — user chủ động đánh phiên Á (bỏ gate conf >= 75)
+    if session == 'OVERNIGHT':
         # Always skip overnight
         if signal_confidence >= 80:  # Super rare, very high confidence
             return False, "Extreme overnight signal (conf 80+), post anyway"

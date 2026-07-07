@@ -496,7 +496,7 @@ def check_h1_trend():
             ind = IndicatorSet(df).calculate_all()
 
             rsi = ind.latest('rsi')
-            trend = "UP ↑" if rsi < 50 else "DOWN ↓" if rsi > 50 else "NEUTRAL"
+            trend = "UP ↑" if rsi > 50 else "DOWN ↓" if rsi < 50 else "NEUTRAL"
 
             lines.append(f"**{sym}** - Trend: {trend} | RSI: {rsi:.1f}")
         except Exception as e:

@@ -84,14 +84,14 @@ async def check_scalp_setup(timeframe):
 
 
 async def get_h1_trend(symbol):
-    """Get H1 macro trend: 'UP' if RSI<50, 'DOWN' if RSI>50, else 'NEUTRAL'."""
+    """Get H1 macro trend: 'UP' if RSI>50, 'DOWN' if RSI<50, else 'NEUTRAL'."""
     try:
         df_h1 = await asyncio.to_thread(fetch_symbol, symbol, "1h", 5)
         ind = IndicatorSet(df_h1).calculate_all()
         rsi = ind.latest('rsi')
-        if rsi < 50:
+        if rsi > 50:
             return "UP"
-        elif rsi > 50:
+        elif rsi < 50:
             return "DOWN"
         else:
             return "NEUTRAL"

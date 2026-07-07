@@ -16,7 +16,7 @@ from fetch import fetch_symbol
 from indicators import IndicatorSet
 from trade_log import log_entry, close_trade, format_stats, list_trades, load_trades, format_daily_stats
 from learning import learn_from_trades, format_learning_report, get_signal_confidence, get_enabled_signals, generate_recommendations
-from trading_profile import add_taught_trade, format_profile, list_taught_trades, parse_teach_text
+from trading_profile import add_taught_trade, format_profile, list_taught_trades, parse_teach_text, forget_taught_trade
 from macro_analysis import generate_daily_report, generate_pre_event_alert, format_macro_summary
 from datetime import datetime, timedelta
 import pytz
@@ -509,6 +509,21 @@ async def handle_command(chat_id, text):
                     reply += f"Lý do: {parsed['reason']}\n\n"
                     reply += "/mystyle để xem profile"
                     logger.info(f"[TEACH] #{trade['id']} {parsed['direction']} {parsed['symbol']}: {parsed['reason']}")
+            await send_reply(chat_id, reply)
+        elif "/forget" in cmd:
+            logger.info(f"/forget from {chat_id}")
+            # /forget <id> — xoá 1 lệnh đã dạy (dạy nhầm/test)
+            parts = text.split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                removed = forget_taught_trade(int(parts[1]))
+                if removed:
+                    reply = f"🗑️ Đã quên lệnh #{removed['id']}: {removed['direction']} {removed['symbol']} "
+                    reply += f"entry {removed['entry']:g} — \"{removed['reason'][:50]}\"\n"
+                    reply += "Profile đã tính lại. /mystyle để xem."
+                else:
+                    reply = f"Không tìm thấy lệnh dạy #{parts[1]}. Gõ /trades-taught để xem danh sách ID."
+            else:
+                reply = "Format: /forget <id>\nGõ /trades-taught để xem ID các lệnh đã dạy."
             await send_reply(chat_id, reply)
         elif "/mystyle" in cmd:
             logger.info(f"/mystyle from {chat_id}")

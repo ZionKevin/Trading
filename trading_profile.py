@@ -169,6 +169,39 @@ def add_taught_trade(entry, sl, tp, reason, symbol="XAU", timeframe="M5"):
     return trade
 
 
+def forget_taught_trade(trade_id):
+    """Xoá 1 lệnh đã dạy theo ID (dạy nhầm/test) — recalc lại style summary.
+
+    Returns: trade đã xoá, hoặc None nếu không tìm thấy ID.
+    """
+    profile = load_profile()
+    removed = None
+    for t in profile['trades_taught']:
+        if t['id'] == trade_id:
+            removed = t
+            profile['trades_taught'].remove(t)
+            break
+    if removed is None:
+        return None
+
+    if profile['trades_taught']:
+        update_style_summary(profile)
+    else:
+        # Hết lệnh dạy → reset summary (update_style_summary bỏ qua list rỗng)
+        profile['style_summary'] = {
+            'avg_risk_reward_ratio': 0,
+            'preferred_entry_types': [],
+            'preferred_confluence': [],
+            'avg_entry_price': 0,
+            'avg_sl_distance': 0,
+            'avg_tp_distance': 0,
+            'confidence_level': 0,
+            'total_trades': 0
+        }
+    save_profile(profile)
+    return removed
+
+
 def update_style_summary(profile):
     """Analyze taught trades and update style summary."""
     trades = profile['trades_taught']

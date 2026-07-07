@@ -314,7 +314,9 @@ def get_top_signals(limit=3):
                      if data['total'] >= MIN_TRADES_PER_SIGNAL and data['enabled']}
 
     if not valid_signals:
-        return list(learning['signals'].keys())[:limit]  # Fallback to any signals
+        # KHÔNG fallback bừa sang signal chưa đủ data (dính BUY_TEST → bot câm).
+        # Trả [] để smart_alert_loop kích hoạt bootstrap DEFAULT_SIGNALS.
+        return []
 
     # Sort by win rate descending
     sorted_signals = sorted(valid_signals.items(),

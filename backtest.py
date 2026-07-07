@@ -1,229 +1,190 @@
 # -*- coding: utf-8 -*-
-"""Backtest scalp signals on 30 days historical data."""
-import pandas as pd
+"""Backtest hệ SMC (Phase 10) trên data lịch sử — walk-forward bar-by-bar.
+
+Dùng CHUNG engine analyze_smc_core với live bot → backtest gì, live chạy nấy.
+Chạy: python backtest.py [days]     (default 25 ngày, khung entry M15)
+"""
+import sys
 from fetch import fetch_symbol
-from scalp_check import find_scalp_entry, check_volume_strength, check_consolidation
-from datetime import datetime, timedelta
-import numpy as np
+from smc_check import analyze_smc_core
+from trade_tracker import get_risk_per_pip
+
+SYMBOLS = ["XAU", "BTC"]
+ENTRY_TF = "15m"
+# Cửa sổ data mỗi lần phân tích — khớp lượng data live bot fetch
+LTF_WINDOW = 400
+H1_WINDOW = 350
+H4_WINDOW = 250
+WARMUP = 300          # bỏ N nến đầu (chưa đủ data phân tích)
+MAX_HOLD_BARS = 96    # 24h trên M15 — quá thì đóng tại close
 
 
-def backtest_symbol(symbol, timeframe="5m", days=30):
-    """Backtest scalp signals for a symbol on historical data.
+def _naive(df):
+    """Bỏ timezone để so sánh index giữa các khung."""
+    if getattr(df.index, 'tz', None) is not None:
+        df = df.copy()
+        df.index = df.index.tz_localize(None)
+    return df
 
-    Args:
-        symbol: 'XAU', 'BTC', 'ETH', etc.
-        timeframe: '5m' or '15m'
-        days: lookback days
 
-    Returns:
-        dict with backtest results
-    """
-    try:
-        df = fetch_symbol(symbol, timeframe, days)
-        if len(df) < 100:
-            return None
+def _close_trade(tr, exit_price, result, exit_time, trades, symbol):
+    side = 1 if tr['dir'] == 'BUY' else -1
+    risk = abs(tr['entry'] - tr['sl'])
+    pnl_usd = (exit_price - tr['entry']) * get_risk_per_pip(symbol) * side
+    pnl_r = ((exit_price - tr['entry']) * side / risk) if risk > 0 else 0
+    trades.append({**tr, 'exit': exit_price, 'result': result,
+                   'exit_time': exit_time, 'pnl_usd': pnl_usd, 'pnl_r': pnl_r})
 
-        trades = []
-        i = 0
-        while i < len(df):
-            # Check for setup at this bar
-            df_window = df.iloc[:i+1].copy()
-            df_h1 = fetch_symbol(symbol, "1h", 5)
 
-            setup = find_scalp_entry(df_window, symbol, df_h1)
+def backtest_symbol(symbol, days=25):
+    """Walk-forward backtest 1 symbol. Returns list trades."""
+    print(f"  Fetching {symbol} data...")
+    df_ltf = _naive(fetch_symbol(symbol, ENTRY_TF, days))
+    df_h1 = _naive(fetch_symbol(symbol, "1h", days))
+    df_h4 = _naive(fetch_symbol(symbol, "4h", 60))
 
-            if setup and setup['volume_is_strong'] and setup['is_consolidating']:
-                entry_price = setup['entry']
-                sl_price = setup['sl']
-                tp_price = setup['tp']
-                signal = setup['signal']
-                entry_time = df.index[i]
+    n = len(df_ltf)
+    print(f"  {symbol}: {n} nến {ENTRY_TF}, {len(df_h1)} nến H1, {len(df_h4)} nến H4 — simulating...")
 
-                # Simulate trade from next bar
-                is_buy = "BUY" in signal
-                trade_open = True
-                exit_price = None
-                exit_time = None
-                pnl = None
+    trades = []
+    tr = None  # trade đang mở (one-at-a-time như live)
 
-                for j in range(i+1, len(df)):
-                    high = df['High'].iloc[j]
-                    low = df['Low'].iloc[j]
-                    close = df['Close'].iloc[j]
+    for i in range(WARMUP, n):
+        t = df_ltf.index[i]
+        hi = float(df_ltf['High'].iloc[i])
+        lo = float(df_ltf['Low'].iloc[i])
+        cl = float(df_ltf['Close'].iloc[i])
 
-                    # Check exit conditions
-                    if is_buy:
-                        if low <= sl_price:  # Hit SL
-                            exit_price = sl_price
-                            pnl = (sl_price - entry_price) * 10
-                            exit_time = df.index[j]
-                            trade_open = False
-                            break
-                        elif high >= tp_price:  # Hit TP
-                            exit_price = tp_price
-                            pnl = (tp_price - entry_price) * 10
-                            exit_time = df.index[j]
-                            trade_open = False
-                            break
-                    else:  # SELL
-                        if high >= sl_price:  # Hit SL
-                            exit_price = sl_price
-                            pnl = (entry_price - sl_price) * 10
-                            exit_time = df.index[j]
-                            trade_open = False
-                            break
-                        elif low <= tp_price:  # Hit TP
-                            exit_price = tp_price
-                            pnl = (entry_price - tp_price) * 10
-                            exit_time = df.index[j]
-                            trade_open = False
-                            break
+        # ===== 1. Quản lý trade đang mở =====
+        if tr is not None:
+            is_buy = tr['dir'] == 'BUY'
+            sl_hit = (lo <= tr['sl']) if is_buy else (hi >= tr['sl'])
+            if sl_hit:
+                # Nến chạm cả SL lẫn TP → conservative tính SL,
+                # trừ khi TP đã chạm ở nến TRƯỚC (best_tp > 0)
+                if tr['best_tp'] > 0:
+                    lvl = tr['best_tp']
+                    _close_trade(tr, tr[f'tp{lvl}'], f'TP{lvl}', t, trades, symbol)
+                else:
+                    _close_trade(tr, tr['sl'], 'SL', t, trades, symbol)
+                tr = None
+                continue
 
-                # If trade still open, close at last close
-                if trade_open:
-                    exit_price = close
-                    if is_buy:
-                        pnl = (close - entry_price) * 10
-                    else:
-                        pnl = (entry_price - close) * 10
-                    exit_time = df.index[-1]
-
-                trades.append({
-                    'symbol': symbol,
-                    'signal': signal,
-                    'entry': entry_price,
-                    'exit': exit_price,
-                    'sl': sl_price,
-                    'tp': tp_price,
-                    'pnl': pnl,
-                    'pnl_pips': exit_price - entry_price if is_buy else entry_price - exit_price,
-                    'entry_time': entry_time,
-                    'exit_time': exit_time,
-                    'status': 'CLOSED' if not trade_open else 'OPEN'
-                })
-
-                # Skip to end of trade
-                i = j if not trade_open else len(df)
-
-            i += 1
-
-        if not trades:
-            return None
-
-        # Calculate stats
-        closed = [t for t in trades if t['status'] == 'CLOSED']
-        if not closed:
-            return None
-
-        wins = [t for t in closed if t['pnl'] > 0]
-        losses = [t for t in closed if t['pnl'] < 0]
-
-        total_pnl = sum(t['pnl'] for t in closed)
-        win_rate = len(wins) / len(closed) * 100 if closed else 0
-        avg_win = sum(t['pnl'] for t in wins) / len(wins) if wins else 0
-        avg_loss = abs(sum(t['pnl'] for t in losses) / len(losses)) if losses else 0
-        rrr = avg_win / avg_loss if avg_loss > 0 else 0
-        max_loss = min(t['pnl'] for t in closed)
-        max_win = max(t['pnl'] for t in closed)
-
-        # Drawdown
-        cumsum = np.cumsum([t['pnl'] for t in closed])
-        running_max = np.maximum.accumulate(cumsum)
-        drawdown = cumsum - running_max
-        max_drawdown = min(drawdown) if len(drawdown) > 0 else 0
-
-        # By signal
-        by_signal = {}
-        for trade in closed:
-            sig = trade['signal']
-            if sig not in by_signal:
-                by_signal[sig] = {'wins': 0, 'losses': 0, 'total_pnl': 0, 'trades': 0}
-            by_signal[sig]['trades'] += 1
-            by_signal[sig]['total_pnl'] += trade['pnl']
-            if trade['pnl'] > 0:
-                by_signal[sig]['wins'] += 1
+            if is_buy:
+                if hi >= tr['tp3']:
+                    tr['best_tp'] = 3
+                elif hi >= tr['tp2']:
+                    tr['best_tp'] = max(tr['best_tp'], 2)
+                elif hi >= tr['tp1']:
+                    tr['best_tp'] = max(tr['best_tp'], 1)
             else:
-                by_signal[sig]['losses'] += 1
+                if lo <= tr['tp3']:
+                    tr['best_tp'] = 3
+                elif lo <= tr['tp2']:
+                    tr['best_tp'] = max(tr['best_tp'], 2)
+                elif lo <= tr['tp1']:
+                    tr['best_tp'] = max(tr['best_tp'], 1)
 
-        return {
-            'symbol': symbol,
-            'timeframe': timeframe,
-            'days': days,
-            'total_trades': len(closed),
-            'wins': len(wins),
-            'losses': len(losses),
-            'win_rate': win_rate,
-            'avg_win': avg_win,
-            'avg_loss': avg_loss,
-            'rrr': rrr,
-            'total_pnl': total_pnl,
-            'max_win': max_win,
-            'max_loss': max_loss,
-            'max_drawdown': max_drawdown,
-            'by_signal': by_signal,
-            'trades': closed
-        }
+            if tr['best_tp'] == 3:
+                _close_trade(tr, tr['tp3'], 'TP3', t, trades, symbol)
+                tr = None
+            elif i - tr['i'] >= MAX_HOLD_BARS:
+                if tr['best_tp'] > 0:
+                    lvl = tr['best_tp']
+                    _close_trade(tr, tr[f'tp{lvl}'], f'TP{lvl}', t, trades, symbol)
+                else:
+                    _close_trade(tr, cl, 'EXIT', t, trades, symbol)
+                tr = None
+            continue
 
-    except Exception as e:
-        print(f"Backtest error {symbol} {timeframe}: {e}")
-        return None
+        # ===== 2. Tìm setup mới (đúng engine live) =====
+        ltf_slice = df_ltf.iloc[max(0, i - LTF_WINDOW):i + 1]
+        h1_slice = df_h1[df_h1.index <= t].tail(H1_WINDOW)
+        h4_slice = df_h4[df_h4.index <= t].tail(H4_WINDOW)
+        if len(h1_slice) < 50 or len(h4_slice) < 60:
+            continue
 
+        setup = analyze_smc_core(symbol, ENTRY_TF, h4_slice, h1_slice, ltf_slice)
+        if setup and setup['volume_is_strong']:
+            tr = {
+                'dir': 'BUY' if setup['direction'] == 'UP' else 'SELL',
+                'signal': setup['signal'],
+                'entry': setup['entry'], 'sl': setup['sl'],
+                'tp1': setup['tp1'], 'tp2': setup['tp'], 'tp3': setup['tp3'],
+                'i': i, 'time': t, 'best_tp': 0,
+            }
 
-def backtest_all_symbols(timeframe="5m", days=30):
-    """Backtest all 6 symbols."""
-    symbols = ["XAU", "BTC", "ETH", "XAG", "USOIL", "DXY"]
-    results = {}
-
-    print(f"\nBacktesting {days} days {timeframe} for all symbols...\n")
-
-    for sym in symbols:
-        result = backtest_symbol(sym, timeframe, days)
-        if result:
-            results[sym] = result
-            print(f"OK {sym}: {result['total_trades']} trades, WR {result['win_rate']:.1f}%, P&L ${result['total_pnl']:.2f}")
-        else:
-            print(f"SKIP {sym}: No trades found")
-
-    return results
+    # Trade còn mở cuối kỳ → bỏ (không đủ dữ liệu kết luận)
+    return trades
 
 
-def format_backtest_report(results):
-    """Format backtest results for display."""
-    if not results:
-        return "No backtest results"
+def format_report(symbol, trades):
+    if not trades:
+        return f"\n=== {symbol}: 0 trades trong kỳ backtest ===\n(SMC kén setup — bình thường nếu ít trade)"
 
-    msg = "BACKTEST REPORT (30 DAYS)\n"
-    msg += "=" * 50 + "\n\n"
+    wins = [t for t in trades if t['result'].startswith('TP')]
+    losses = [t for t in trades if t['result'] == 'SL']
+    exits = [t for t in trades if t['result'] == 'EXIT']
+    decided = len(wins) + len(losses)
+    wr = len(wins) / decided * 100 if decided else 0
+    total_r = sum(t['pnl_r'] for t in trades)
+    total_usd = sum(t['pnl_usd'] for t in trades)
 
-    total_trades = sum(r['total_trades'] for r in results.values())
-    total_pnl = sum(r['total_pnl'] for r in results.values())
+    lines = [f"\n=== {symbol} — {len(trades)} trades ==="]
+    lines.append(f"Win rate: {wr:.0f}% ({len(wins)}W-{len(losses)}L, {len(exits)} timeout)")
+    lines.append(f"Tổng: {total_r:+.1f}R | ${total_usd:+,.0f} (theo công thức P&L bot)")
 
-    msg += f"Total Trades: {total_trades}\n"
-    msg += f"Total P&L: ${total_pnl:.2f}\n\n"
+    # TP level hit rates
+    for lvl in (1, 2, 3):
+        hits = sum(1 for t in trades if t['result'] == f'TP{lvl}')
+        if hits:
+            lines.append(f"  TP{lvl} exit: {hits} lần")
 
-    for sym, result in sorted(results.items()):
-        msg += f"[{sym}] ({result['timeframe']})\n"
-        msg += f"  Trades: {result['total_trades']} | W: {result['wins']} L: {result['losses']}\n"
-        msg += f"  Win Rate: {result['win_rate']:.1f}% | RRR: {result['rrr']:.2f}\n"
-        msg += f"  Avg Win: ${result['avg_win']:.2f} | Avg Loss: ${result['avg_loss']:.2f}\n"
-        msg += f"  P&L: ${result['total_pnl']:.2f} | Max DD: ${result['max_drawdown']:.2f}\n"
+    # Per-signal breakdown
+    lines.append("Per signal:")
+    sigs = {}
+    for t in trades:
+        sigs.setdefault(t['signal'], []).append(t)
+    for sig, ts in sorted(sigs.items(), key=lambda x: -len(x[1])):
+        w = sum(1 for t in ts if t['result'].startswith('TP'))
+        l = sum(1 for t in ts if t['result'] == 'SL')
+        r = sum(t['pnl_r'] for t in ts)
+        d = w + l
+        swr = w / d * 100 if d else 0
+        lines.append(f"  {sig}: {len(ts)} trades, {swr:.0f}% WR, {r:+.1f}R")
 
-        if result['by_signal']:
-            msg += f"  Signals:\n"
-            for sig, data in sorted(result['by_signal'].items()):
-                wr = data['wins'] / (data['wins'] + data['losses']) * 100 if (data['wins'] + data['losses']) > 0 else 0
-                msg += f"    - {sig}: {data['wins']}W-{data['losses']}L ({wr:.0f}%) | ${data['total_pnl']:.2f}\n"
-        msg += "\n"
+    # Trade list (10 gần nhất)
+    lines.append("10 trades gần nhất:")
+    for t in trades[-10:]:
+        lines.append(f"  {str(t['time'])[:16]} {t['dir']} {t['entry']:.1f} → {t['exit']:.1f} "
+                     f"[{t['result']}] {t['pnl_r']:+.1f}R ({t['signal']})")
 
-    return msg
+    return "\n".join(lines)
+
+
+def main():
+    days = int(sys.argv[1]) if len(sys.argv) > 1 else 25
+    print(f"SMC BACKTEST — {days} ngày, khung entry {ENTRY_TF}, symbols: {SYMBOLS}")
+    print("(Walk-forward bar-by-bar, one-trade-at-a-time, cùng engine với live bot)")
+
+    all_trades = []
+    for sym in SYMBOLS:
+        try:
+            trades = backtest_symbol(sym, days)
+            print(format_report(sym, trades))
+            all_trades.extend(trades)
+        except Exception as e:
+            print(f"\n=== {sym}: ERROR {e} ===")
+
+    if all_trades:
+        total_r = sum(t['pnl_r'] for t in all_trades)
+        wins = sum(1 for t in all_trades if t['result'].startswith('TP'))
+        losses = sum(1 for t in all_trades if t['result'] == 'SL')
+        d = wins + losses
+        print(f"\n{'=' * 40}")
+        print(f"TỔNG: {len(all_trades)} trades | WR {wins / d * 100 if d else 0:.0f}% | {total_r:+.1f}R")
+        print("Lưu ý: chưa tính slippage/spread. Kết quả quá khứ không đảm bảo tương lai.")
 
 
 if __name__ == "__main__":
-    # Backtest M5 all symbols
-    results_m5 = backtest_all_symbols("5m", 30)
-    print(format_backtest_report(results_m5))
-
-    # Backtest M15 all symbols
-    print("\n" + "="*50 + "\n")
-    results_m15 = backtest_all_symbols("15m", 30)
-    print(format_backtest_report(results_m15))
+    main()

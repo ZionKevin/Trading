@@ -85,18 +85,22 @@ def _pick_tp(entry, risk, pools, direction, mults=(1.0, 2.0, 3.0)):
 
 
 def analyze_symbol_smc(symbol, tf="15m"):
-    """Tìm setup SMC cho 1 symbol + timeframe.
-
-    Returns:
-        dict setup (tương thích smart_alert_loop) hoặc None.
-        Kèm 'context' đầy đủ để alert giải thích bot đang nghĩ gì.
-    """
+    """Tìm setup SMC cho 1 symbol + timeframe (fetch data live rồi gọi core)."""
     try:
         df_h4, df_h1, df_ltf = _fetch_context(symbol, tf)
     except Exception as e:
         logger.error(f"analyze_symbol_smc fetch {symbol} {tf}: {e}")
         return None
+    return analyze_smc_core(symbol, tf, df_h4, df_h1, df_ltf)
 
+
+def analyze_smc_core(symbol, tf, df_h4, df_h1, df_ltf):
+    """Engine SMC thuần (không fetch) — dùng chung cho live bot VÀ backtest.
+
+    Returns:
+        dict setup (tương thích smart_alert_loop) hoặc None.
+        Kèm 'context' đầy đủ để alert giải thích bot đang nghĩ gì.
+    """
     if len(df_ltf) < 50 or len(df_h1) < 50:
         return None
 

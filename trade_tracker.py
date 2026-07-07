@@ -99,6 +99,8 @@ def close_alert(alert_id, result, exit_price=None, tp_level=None):
         if alert['id'] == alert_id:
             symbol = alert.get('symbol', 'XAU')
             risk_per_pip = get_risk_per_pip(symbol)
+            # SELL: lời khi giá GIẢM → nhân -1 (trước đây pnl SELL bị ngược dấu)
+            side = -1 if 'SELL' in alert.get('signal', '') else 1
 
             if result == 'TP':
                 alert['status'] = 'TP_HIT'
@@ -113,17 +115,17 @@ def close_alert(alert_id, result, exit_price=None, tp_level=None):
                 else:
                     alert['exit_price'] = alert['tp']  # Default to TP2
 
-                pnl = (alert['exit_price'] - alert['entry']) * risk_per_pip
+                pnl = (alert['exit_price'] - alert['entry']) * risk_per_pip * side
             elif result == 'SL':
                 alert['status'] = 'SL_HIT'
                 alert['result'] = 'LOSS'
                 alert['exit_price'] = alert['sl']
-                pnl = (alert['sl'] - alert['entry']) * risk_per_pip
+                pnl = (alert['sl'] - alert['entry']) * risk_per_pip * side
             elif result == 'EXIT' and exit_price is not None:
                 # Manual exit at specific price
                 alert['status'] = 'MANUAL_EXIT'
                 alert['exit_price'] = exit_price
-                pnl = (exit_price - alert['entry']) * risk_per_pip
+                pnl = (exit_price - alert['entry']) * risk_per_pip * side
 
                 # Determine if WIN or LOSS based on profit
                 if pnl > 0:
@@ -145,6 +147,27 @@ def close_alert(alert_id, result, exit_price=None, tp_level=None):
 
             return alert
 
+    return None
+
+
+def expire_alert(alert_id, reason="timeout"):
+    """Đóng alert hết hạn — KHÔNG tính win/loss (pnl=0, không làm bẩn learning).
+
+    Dùng khi giá không chạm SL/TP trong thời gian tối đa và user không xử lý tay.
+    """
+    tracker = load_tracker()
+    for alert in tracker['posted_alerts']:
+        if alert['id'] == alert_id:
+            alert['status'] = 'EXPIRED'
+            alert['result'] = None
+            alert['pnl'] = 0
+            alert['expire_reason'] = reason
+            alert['closed_at'] = datetime.now().isoformat()
+            tracker['closed_trades'].append(alert)
+            tracker['posted_alerts'].remove(alert)
+            tracker['last_update'] = datetime.now().isoformat()
+            save_tracker(tracker)
+            return alert
     return None
 
 
@@ -177,6 +200,8 @@ def get_signal_live_stats():
 
     stats = {}
     for trade in tracker['closed_trades']:
+        if trade.get('result') not in ('WIN', 'LOSS'):
+            continue  # EXPIRED alerts không tính vào win rate
         sig = trade['signal']
         if sig not in stats:
             stats[sig] = {'wins': 0, 'losses': 0, 'total': 0}

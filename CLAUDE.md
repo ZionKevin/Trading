@@ -152,8 +152,20 @@ TP1/TP2/TP3 = liquidity pools H1 thật (equal highs/lows), fallback 1R/2R/3R.
 **Confidence boost:** +15% nếu OB+FVG chồng nhau, +10% nếu nến xác nhận mạnh (strength 3).
 
 **Files mới:** `smc_structure.py` · `candle_patterns.py` · `elliott_wave.py` · `smc_check.py`
-**Code cũ giữ trong repo** (scalp_check.py, market_structure.py) — check_volume_strength vẫn dùng chung; backtest.py CHƯA port sang SMC.
+**Code cũ giữ trong repo** (scalp_check.py, market_structure.py) — check_volume_strength vẫn dùng chung.
 `/m5` `/m15` → SMC analysis · `/h1` → H4 Elliott + H1 structure
+
+**Phase 10.1 (cùng ngày):**
+- **`/day` (alias `/teach`) gõ tự do:** parser tự hiểu mọi thứ tự — `/day buy 4150 sl 4140 tp 4170 test OB H1`,
+  `/day 4150 4140 4170 lý do`, tự nhận BUY/SELL từ vị trí SL, tự nhận BTC/XAU, tự đảo SL/TP nếu gõ nhầm chỗ.
+  Keyword học style đã đổi sang SMC (OB, FVG, BOS, CHoCH, liquidity, nến, sóng...).
+- **alert_watchdog (task thứ 7):** mỗi 10 phút soi nến 5m từ lúc post alert — chạm SL/TP thì TỰ ĐÓNG đúng thực tế
+  (nến chạm cả 2 → tính SL, conservative), treo quá 4h → expire (pnl 0, không tính win/loss).
+  → Hết bệnh "quên /tp /sl là bot câm vĩnh viễn". Learning vẫn nhận data từ auto-close.
+- **backtest.py port sang SMC:** walk-forward bar-by-bar, dùng CHUNG `analyze_smc_core` với live bot,
+  one-trade-at-a-time, nến chạm cả SL+TP tính SL. Chạy: `python backtest.py [days]`.
+- **Fix P&L SELL bị ngược dấu** trong `close_alert` (SELL thắng TP mà pnl âm) + EXPIRED không tính vào win rate.
+- **Fix `/trades-taught` bị `/trades` nuốt** (thứ tự elif).
 
 ---
 

@@ -10,13 +10,13 @@ from trend_check import check_trends
 from market_status import market_overview
 from smc_check import analyze_symbol_smc, format_smc_analysis, format_smc_htf, SMC_SIGNALS
 from session_manager import get_current_session, should_skip_session, format_session_recommendations, update_hourly_stats
-from trade_tracker import post_alert, close_alert, get_session_alert_count, get_pending_alerts, has_open_trade, format_live_performance
+from trade_tracker import post_alert, close_alert, expire_alert, get_session_alert_count, get_pending_alerts, has_open_trade, format_live_performance
 from learning import get_top_signals
 from fetch import fetch_symbol
 from indicators import IndicatorSet
 from trade_log import log_entry, close_trade, format_stats, list_trades, load_trades, format_daily_stats
 from learning import learn_from_trades, format_learning_report, get_signal_confidence, get_enabled_signals, generate_recommendations
-from trading_profile import add_taught_trade, format_profile, list_taught_trades
+from trading_profile import add_taught_trade, format_profile, list_taught_trades, parse_teach_text
 from macro_analysis import generate_daily_report, generate_pre_event_alert, format_macro_summary
 from datetime import datetime, timedelta
 import pytz
@@ -95,6 +95,102 @@ async def pre_event_alerts():
             await asyncio.sleep(30)
         except Exception as e:
             logger.error(f"pre_event_alerts error: {e}")
+            await asyncio.sleep(60)
+
+
+async def alert_watchdog():
+    """Tự xử lý alert treo (fix bệnh 'quên /tp /sl → bot câm vĩnh viễn').
+
+    Mỗi 10 phút, với từng alert PENDING:
+    - Soi nến 5m TỪ LÚC POST: giá chạm SL trước → tự đóng SL; chạm TP → tự đóng
+      đúng level cao nhất đã chạm (nến nào chạm cả 2 thì tính SL — conservative).
+    - Không chạm gì suốt 4 tiếng → expire (pnl 0, không tính win/loss).
+    Kết quả tự đóng vẫn được learning ghi nhận như /tp /sl tay.
+    """
+    WATCH_INTERVAL = 600     # 10 phút
+    MAX_AGE_HOURS = 4        # alert scalp M5/M15 quá 4h không chạm gì = hết giá trị
+    logger.info(f"[WATCHDOG] Started — auto TP/SL theo nến, expire sau {MAX_AGE_HOURS}h")
+
+    while True:
+        try:
+            await asyncio.sleep(WATCH_INTERVAL)
+            pending = get_pending_alerts()
+            if not pending:
+                continue
+
+            for alert in list(pending):
+                try:
+                    posted = datetime.fromisoformat(alert['posted_at'])
+                    age_h = (datetime.now() - posted).total_seconds() / 3600
+                    is_buy = 'BUY' in alert['signal']
+                    days = max(1, min(7, int(age_h / 24) + 1))
+
+                    df = await asyncio.to_thread(fetch_symbol, alert['symbol'], '5m', days)
+                    if getattr(df.index, 'tz', None) is not None:
+                        df = df.copy()
+                        df.index = df.index.tz_localize(None)
+                    candles = df[df.index > posted]
+
+                    sl = alert['sl']
+                    tp1, tp2, tp3 = alert.get('tp1'), alert['tp'], alert.get('tp3')
+                    best_tp = 0
+                    outcome = None
+
+                    for _, c in candles.iterrows():
+                        hi, lo = float(c['High']), float(c['Low'])
+                        sl_hit = (lo <= sl) if is_buy else (hi >= sl)
+                        if sl_hit:
+                            # TP đã chạm ở nến TRƯỚC đó thì tính TP, không thì SL
+                            outcome = ('TP', best_tp) if best_tp > 0 else ('SL', None)
+                            break
+                        if is_buy:
+                            if tp3 and hi >= tp3:
+                                best_tp = 3
+                            elif hi >= tp2:
+                                best_tp = max(best_tp, 2)
+                            elif tp1 and hi >= tp1:
+                                best_tp = max(best_tp, 1)
+                        else:
+                            if tp3 and lo <= tp3:
+                                best_tp = 3
+                            elif lo <= tp2:
+                                best_tp = max(best_tp, 2)
+                            elif tp1 and lo <= tp1:
+                                best_tp = max(best_tp, 1)
+
+                    if outcome is None:
+                        if best_tp > 0:
+                            outcome = ('TP', best_tp)
+                        elif age_h >= MAX_AGE_HOURS:
+                            outcome = ('EXPIRE', None)
+
+                    if outcome is None:
+                        continue  # còn sống, chờ tiếp
+
+                    aid = alert['id']
+                    if outcome[0] == 'TP':
+                        closed = close_alert(aid, 'TP', tp_level=outcome[1])
+                        if closed:
+                            msg = f"🤖 Auto-close Alert #{aid}: giá đã chạm TP{outcome[1]} → +${abs(closed['pnl']):.0f}"
+                            await send_reply(CHANNEL_ID, msg)
+                            logger.info(f"[WATCHDOG] #{aid} auto TP{outcome[1]}")
+                    elif outcome[0] == 'SL':
+                        closed = close_alert(aid, 'SL')
+                        if closed:
+                            msg = f"🤖 Auto-close Alert #{aid}: giá đã chạm SL → -${abs(closed['pnl']):.0f}"
+                            await send_reply(CHANNEL_ID, msg)
+                            logger.info(f"[WATCHDOG] #{aid} auto SL")
+                    else:
+                        expire_alert(aid)
+                        msg = f"⏱️ Alert #{aid} hết hạn ({MAX_AGE_HOURS}h không chạm SL/TP) — tự đóng, không tính win/loss"
+                        await send_reply(CHANNEL_ID, msg)
+                        logger.info(f"[WATCHDOG] #{aid} expired")
+
+                except Exception as e:
+                    logger.error(f"alert_watchdog alert #{alert.get('id')}: {e}")
+
+        except Exception as e:
+            logger.error(f"alert_watchdog error: {e}")
             await asyncio.sleep(60)
 
 
@@ -299,6 +395,10 @@ async def handle_command(chat_id, text):
             logger.info(f"/stats from {chat_id}")
             reply = format_stats()
             await send_reply(chat_id, reply)
+        elif "/trades-taught" in cmd:
+            logger.info(f"/trades-taught from {chat_id}")
+            reply = list_taught_trades(10)
+            await send_reply(chat_id, reply)
         elif "/trades" in cmd:
             logger.info(f"/trades from {chat_id}")
             reply = list_trades(10)
@@ -383,36 +483,36 @@ async def handle_command(chat_id, text):
             else:
                 reply = "Format: /exit <alert_id> <price>"
             await send_reply(chat_id, reply)
-        elif "/teach" in cmd:
-            logger.info(f"/teach from {chat_id}")
-            # Format: /teach entry sl tp reason
-            # Example: /teach 4543 4540 4570 Chờ test Fibo 38.2%, rejection wick, H1 UP
-            parts = text.split(maxsplit=4)
-            if len(parts) >= 5:
-                try:
-                    entry = float(parts[1])
-                    sl = float(parts[2])
-                    tp = float(parts[3])
-                    reason = parts[4]
-
-                    trade = add_taught_trade(entry, sl, tp, reason)
-                    reply = f"✅ Trade #️⃣{trade['id']} learned!\n"
-                    reply += f"Entry: {entry:.0f} | SL: {sl:.0f} | TP: {tp:.0f}\n"
-                    reply += f"Reason: {reason}\n\n"
-                    reply += "Use /mystyle to see your trading profile"
-                    logger.info(f"[TEACH] Trade #{trade['id']}: {reason}")
-                except ValueError:
-                    reply = "Format: /teach <entry> <sl> <tp> <reason>\nExample: /teach 4543 4540 4570 Chờ test Fibo 38.2%"
+        elif "/teach" in cmd or "/day" in cmd:
+            logger.info(f"/teach|/day from {chat_id}")
+            # Gõ tự do — parser tự hiểu: /day buy 4150 sl 4140 tp 4170 test OB
+            body = re.sub(r'^/(teach|day)\S*\s*', '', text.strip(), flags=re.IGNORECASE)
+            if not body:
+                reply = ("Dạy tao 1 lệnh mày đã đánh — gõ thoải mái, không cần đúng thứ tự:\n"
+                         "• /day buy 4150 sl 4140 tp 4170 test OB H1 + nến engulfing\n"
+                         "• /day 4150 4140 4170 CHoCH xong quét liquidity\n"
+                         "• /day sell btc 63500 sl 63900 tp 62800 FVG premium")
             else:
-                reply = "Format: /teach <entry> <sl> <tp> <reason>\nExample: /teach 4543 4540 4570 Chờ test Fibo 38.2%"
+                parsed, err = parse_teach_text(body)
+                if err:
+                    reply = err
+                else:
+                    trade = add_taught_trade(parsed['entry'], parsed['sl'], parsed['tp'],
+                                             parsed['reason'], symbol=parsed['symbol'],
+                                             timeframe=parsed['timeframe'])
+                    risk = abs(parsed['entry'] - parsed['sl'])
+                    reward = abs(parsed['tp'] - parsed['entry'])
+                    rrr = reward / risk if risk > 0 else 0
+                    reply = f"✅ Đã học lệnh #{trade['id']} — tao hiểu thế này, sai thì /day lại:\n"
+                    reply += f"{parsed['direction']} {parsed['symbol']} ({parsed['timeframe']})\n"
+                    reply += f"Entry {parsed['entry']:g} | SL {parsed['sl']:g} | TP {parsed['tp']:g} (RRR 1:{rrr:.1f})\n"
+                    reply += f"Lý do: {parsed['reason']}\n\n"
+                    reply += "/mystyle để xem profile"
+                    logger.info(f"[TEACH] #{trade['id']} {parsed['direction']} {parsed['symbol']}: {parsed['reason']}")
             await send_reply(chat_id, reply)
         elif "/mystyle" in cmd:
             logger.info(f"/mystyle from {chat_id}")
             reply = format_profile()
-            await send_reply(chat_id, reply)
-        elif "/trades-taught" in cmd:
-            logger.info(f"/trades-taught from {chat_id}")
-            reply = list_taught_trades(10)
             await send_reply(chat_id, reply)
         elif "/macro" in cmd:
             logger.info(f"/macro from {chat_id}")
@@ -534,6 +634,7 @@ async def main():
     await asyncio.gather(
         run_bot(),
         smart_alert_loop(),
+        alert_watchdog(),
         auto_learning_task(),
         daily_report_task(),
         daily_macro_report(),

@@ -326,23 +326,33 @@ python backtest.py                 # 30-day backtest all symbols
 
 ---
 
-## 8. Known Limitations & TODOs
+## 8. HANDOFF — Đọc kỹ nếu mày là AI/dev mới tiếp quản project này
 
-### Current Limitations
-- No auto-trade execution (manual /tp /sl commands only)
-- Backtest doesn't account for slippage/commissions
-- Macro calendar currently hardcoded (sample data, can swap for API)
-- No real-time P&L dashboard (trades logged to trades.json only)
+### Trạng thái hiện tại (2026-07-07, sau Phase 10.1)
+- **Hệ signal đang chạy = SMC + Elliott (Phase 10)**, KHÔNG phải Fibo/MA89/Pivot nữa.
+  Não bot nằm ở `smc_check.py` (analyze_smc_core). File cũ scalp_check.py/market_structure.py
+  chỉ còn để rollback + dùng ké check_volume_strength.
+- Chỉ quét **XAU + BTC** (user chọn). Learning đang gom data từ đầu (reset sạch 07/07).
+- User: **trader Việt, đánh vàng dạo, không rành code** — nói tiếng Việt, giải thích đơn giản,
+  ĐỪNG bắt user gõ lệnh phức tạp. User thích SL 100-150 pip XAU, RRR bất đối xứng, KHÔNG auto-trade.
+- Hướng dẫn sử dụng cho user: `HUONG_DAN.md` (tiếng Việt) — sửa tính năng thì NHỚ cập nhật file này.
+- Lịch sử debug đầy đủ: xem Edit History cuối file + memory của Claude Code
+  (`~/.claude/projects/C--Projects-Trading/memory/`).
 
-### TODO (Future Phases — Phase 9+)
-- [ ] Real-time P&L dashboard with live chart
-- [ ] Auto-trade execution (broker API integration — V20 Oanda, etc.)
-- [ ] TradingEconomics API for live economic calendar
-- [ ] Statistical analysis: which TP level has best win rate per signal type
-- [ ] Recommendation engine: "TP2 has 85% hit rate on Fibo signals"
-- [ ] Signal filtering based on learned trading profile
-- [ ] Slippage/commission modeling in backtest
-- [ ] Multi-account support (different profiles per account)
+### Bug kinh điển đã dính — ĐỪNG lặp lại
+1. **Bot câm nhiều tuần** vì get_top_signals fallback trả signal test không tồn tại → giờ trả `[]` để bootstrap. Đừng thêm fallback "trả bừa" kiểu đó nữa.
+2. **H1 trend bị NGƯỢC** (RSI<50 = UP?!) ở 2 chỗ suốt 1 tháng — sửa 1 chỗ thì grep các chỗ còn lại.
+3. **Runtime json từng nằm trong git** → deploy đè mất data VPS. Đã .gitignore. Đừng commit lại trades.json/learning.json/alert_tracker.json/trading_profile.json.
+4. **P&L SELL ngược dấu** trong close_alert (thiếu nhân -1) — đã fix, để ý khi thêm công thức P&L mới.
+5. **Chạy bot local = 409 Conflict** với VPS. Test bằng cách gọi hàm trực tiếp, không chạy `python telegram_bot_v2.py`.
+
+### TODO còn treo (ưu tiên từ trên xuống)
+- [ ] Learning theo cặp (signal + symbol) — hiện gộp XAU/BTC chung 1 rổ, P&L khác scale làm méo avg_win/RRR
+- [ ] Hạ MIN_TRADES_PER_SIGNAL 5 → 3 hoặc bơm data backtest vào learning (cold-start chậm: 8 signals × 5 trades mới có confidence)
+- [ ] Thống kê TP level nào hit nhiều nhất per signal → gợi ý "signal X nên chốt TP1"
+- [ ] Backtest thêm slippage/spread; backtest khung 5m (hiện chỉ 15m)
+- [ ] TradingEconomics API cho lịch kinh tế thật (macro_analysis.py đang hardcode)
+- [ ] Auto-trade execution (Oanda V20...) — user CHƯA muốn, hỏi lại trước khi làm
 
 ---
 

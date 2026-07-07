@@ -55,6 +55,7 @@ if TV_AVAILABLE:
         "5m":  Interval.in_5_minute,
         "15m": Interval.in_15_minute,
         "1h":  Interval.in_1_hour,
+        "4h":  Interval.in_4_hour,
         "1d":  Interval.in_daily,
     }
 else:
@@ -81,7 +82,7 @@ def fetch_symbol(symbol, timeframe="5m", days=7):
             tv_sym, tv_exch = TV_SYMBOLS[symbol]
             tv_interval = TV_INTERVALS.get(timeframe, Interval.in_5_minute)
             # n_bars theo timeframe (trước đây *200 luôn → fetch dư ~20 năm daily).
-            bars_per_day = {"1m": 1440, "5m": 288, "15m": 96, "1h": 24, "1d": 1}.get(timeframe, 288)
+            bars_per_day = {"1m": 1440, "5m": 288, "15m": 96, "1h": 24, "4h": 6, "1d": 1}.get(timeframe, 288)
             n_bars = min(days * bars_per_day, 5000)
             n_bars = max(n_bars, 120)  # đủ nến cho indicators (MA89 cần ≥89)
             with _tv_lock:  # serialize truy cập websocket dùng chung
@@ -101,9 +102,16 @@ def fetch_symbol(symbol, timeframe="5m", days=7):
     if symbol in ("XAU", "XAG"):
         print(f"[WARN] {symbol} fallback yfinance ({YF_SYMBOLS[symbol]}) — giá futures có thể delay 15-30 min")
     ticker = yf.Ticker(YF_SYMBOLS[symbol])
-    hist = ticker.history(period=f"{days}d", interval=timeframe)
+    # yfinance không có interval 4h → fetch 1h rồi resample
+    yf_interval = "1h" if timeframe == "4h" else timeframe
+    hist = ticker.history(period=f"{days}d", interval=yf_interval)
     if hist.empty:
         raise ValueError(f"Không fetch được {symbol} {timeframe} (cả TV và yfinance fail)")
+    if timeframe == "4h":
+        hist = hist.resample("4h").agg({
+            'Open': 'first', 'High': 'max', 'Low': 'min',
+            'Close': 'last', 'Volume': 'sum'
+        }).dropna()
     return hist
 
 

@@ -8,8 +8,7 @@ from telegram.error import TelegramError
 from price_check import check_prices
 from trend_check import check_trends
 from market_status import market_overview
-from scalp_check import check_h1_trend, check_m5_scalp, check_m15_scalp, find_scalp_entry, check_symbol_setup
-from market_structure import detect_rejection_candle, detect_support_hold, get_last_n_rejections, calculate_optimal_sl_tp
+from smc_check import analyze_symbol_smc, format_smc_analysis, format_smc_htf, SMC_SIGNALS
 from session_manager import get_current_session, should_skip_session, format_session_recommendations, update_hourly_stats
 from trade_tracker import post_alert, close_alert, get_session_alert_count, get_pending_alerts, has_open_trade, format_live_performance
 from learning import get_top_signals
@@ -65,41 +64,6 @@ async def send_reply(chat_id, text):
         return False
 
 
-async def check_scalp_setup(timeframe):
-    """Check if M5/M15 has setup. Return setup dict or None."""
-    try:
-        if timeframe == "5m":
-            df = fetch_symbol("XAU", "5m", 7)
-        elif timeframe == "15m":
-            df = fetch_symbol("XAU", "15m", 7)
-        else:
-            return None
-
-        df_h1 = fetch_symbol("XAU", "1h", 5)
-        setup = find_scalp_entry(df, "XAU", df_h1)
-        return setup
-    except Exception as e:
-        logger.error(f"check_scalp_setup {timeframe} error: {e}")
-        return None
-
-
-async def get_h1_trend(symbol):
-    """Get H1 macro trend: 'UP' if RSI>50, 'DOWN' if RSI<50, else 'NEUTRAL'."""
-    try:
-        df_h1 = await asyncio.to_thread(fetch_symbol, symbol, "1h", 5)
-        ind = IndicatorSet(df_h1).calculate_all()
-        rsi = ind.latest('rsi')
-        if rsi > 50:
-            return "UP"
-        elif rsi < 50:
-            return "DOWN"
-        else:
-            return "NEUTRAL"
-    except Exception as e:
-        logger.error(f"get_h1_trend {symbol} error: {e}")
-        return "NEUTRAL"
-
-
 async def daily_macro_report():
     """Send daily macro report at 1 AM US time (6 PM UTC)."""
     while True:
@@ -135,11 +99,11 @@ async def pre_event_alerts():
 
 
 async def smart_alert_loop():
-    """Phase 6: ONE ALERT PER SESSION max (strict one-at-a-time)."""
+    """Phase 10 SMC: Elliott H4 → BOS/CHoCH H1 → OB/FVG M5/M15 + nến Nhật. One-at-a-time."""
     global alert_count_today
-    logger.info("[ALERT] Phase 6: One alert per session + best signal only (NO SPAM)")
-    symbols = ["XAU", "BTC", "ETH", "XAG", "USOIL", "DXY"]
-    symbol_emojis = {"XAU": "🥇", "BTC": "🔵", "ETH": "⬜", "XAG": "🪙", "USOIL": "🛢️", "DXY": "💹"}
+    logger.info("[ALERT] Phase 10 SMC: XAU+BTC | Elliott bias + BOS/CHoCH + OB/FVG + candle confirm")
+    symbols = ["XAU", "BTC"]
+    symbol_emojis = {"XAU": "🥇", "BTC": "🔵"}
 
     while True:
         try:
@@ -156,17 +120,8 @@ async def smart_alert_loop():
             session_info = get_current_session(current_hour_utc)
             session_name = session_info['session']
 
-            # Default signals khi chưa có learning data (bootstrap mode)
-            DEFAULT_SIGNALS = [
-                'BUY_FIBO_38_BOUNCE', 'SELL_FIBO_38_BOUNCE',
-                'BUY_FIBO_61_BOUNCE', 'SELL_FIBO_61_BOUNCE',
-                'BUY_FIBO_38_REJECTION', 'SELL_FIBO_38_REJECTION',
-                'BUY_FIBO_61_REJECTION', 'SELL_FIBO_61_REJECTION',
-                'BUY_SUPPORT_BOUNCE', 'SELL_RESISTANCE_BOUNCE',
-                'BUY_PIVOT_S1_BOUNCE', 'SELL_PIVOT_R1_BOUNCE',
-                'BUY_MA89_BOUNCE', 'SELL_MA89_BOUNCE',
-                'BUY_TRENDLINE_BREAKUP', 'SELL_TRENDLINE_BREAKDN',
-            ]
+            # Default signals khi chưa có learning data (bootstrap mode) — 8 signal SMC
+            DEFAULT_SIGNALS = list(SMC_SIGNALS)
 
             # Get BEST signal (highest win rate from top 3)
             top_signals = get_top_signals(limit=3)
@@ -175,16 +130,13 @@ async def smart_alert_loop():
                 top_signals = DEFAULT_SIGNALS
                 logger.info(f"[BOOTSTRAP] No learning data — scanning {len(DEFAULT_SIGNALS)} default signals")
 
-            # Fetch + tính setup MỖI symbol/timeframe ĐÚNG 1 LẦN/cycle. Trước đây
-            # gọi lại theo từng candidate_signal → fetch dư tới ~16× (bootstrap) và
-            # block event loop hàng phút. Giờ cache + offload thread (asyncio.to_thread)
-            # để Telegram /price /m5 vẫn phản hồi trong lúc quét.
-            h1_cache = {}
+            # Phân tích SMC mỗi symbol/timeframe ĐÚNG 1 LẦN/cycle, offload thread
+            # (mỗi lần phân tích fetch H4+H1+LTF). Trend alignment đã nằm TRONG engine
+            # (H1 BOS/CHoCH + Elliott bias) — không cần filter RSI ngoài này nữa.
             setup_cache = {}
             for sym in symbols:
-                h1_cache[sym] = await get_h1_trend(sym)
-                setup_cache[(sym, "5m")] = await asyncio.to_thread(check_symbol_setup, sym, "5m")
-                setup_cache[(sym, "15m")] = await asyncio.to_thread(check_symbol_setup, sym, "15m")
+                setup_cache[(sym, "5m")] = await asyncio.to_thread(analyze_symbol_smc, sym, "5m")
+                setup_cache[(sym, "15m")] = await asyncio.to_thread(analyze_symbol_smc, sym, "15m")
 
             # Loop qua từng signal trong top_signals, dừng khi tìm thấy setup
             best_setup = None
@@ -195,38 +147,24 @@ async def smart_alert_loop():
 
             for candidate_signal in top_signals:
                 candidate_conf = get_signal_confidence(candidate_signal)
-                is_buy = "BUY" in candidate_signal
 
                 # Check session skip rule
                 skip_session, _ = should_skip_session(current_hour_utc, candidate_conf)
                 if skip_session:
                     continue
 
-                # Scan all symbols for this signal (đọc từ cache, KHÔNG fetch lại)
                 for sym in symbols:
-                    h1_trend = h1_cache[sym]
-                    trend_aligned = (is_buy and h1_trend == "UP") or (not is_buy and h1_trend == "DOWN")
-                    if not trend_aligned:
-                        continue
-
-                    # Check M5
-                    setup_m5 = setup_cache[(sym, "5m")]
-                    if setup_m5 and setup_m5['signal'] == candidate_signal and setup_m5['volume_is_strong']:
-                        best_setup = setup_m5
-                        best_sym = sym
-                        best_tf = "5m"
-                        best_signal = candidate_signal
-                        signal_confidence = candidate_conf
+                    for tf in ("5m", "15m"):
+                        setup = setup_cache[(sym, tf)]
+                        if setup and setup['signal'] == candidate_signal and setup['volume_is_strong']:
+                            best_setup = setup
+                            best_sym = sym
+                            best_tf = tf
+                            best_signal = candidate_signal
+                            signal_confidence = candidate_conf
+                            break
+                    if best_setup:
                         break
-
-                    # Check M15
-                    setup_m15 = setup_cache[(sym, "15m")]
-                    if setup_m15 and setup_m15['signal'] == candidate_signal and setup_m15['volume_is_strong']:
-                        best_setup = setup_m15
-                        best_sym = sym
-                        best_tf = "15m"
-                        best_signal = candidate_signal
-                        signal_confidence = candidate_conf
 
                 if best_setup:
                     break  # Found a setup, stop scanning more signals
@@ -238,70 +176,52 @@ async def smart_alert_loop():
 
             logger.info(f"[SCAN] Found {best_signal} on {best_sym} {best_tf} (conf {signal_confidence:.0f}%)")
 
-            # Found best_setup, post it
-            h1_trend = h1_cache[best_sym]
-            is_buy = "BUY" in best_setup['signal']
+            # Found best_setup, post it — alert đầy đủ ngữ cảnh SMC
+            ctx = best_setup['context']
+            is_buy = best_setup['direction'] == 'UP'
             dir_text = "BUY" if is_buy else "SELL"
             emoji = symbol_emojis.get(best_sym, "📍")
-
-            # Generate action text based on signal type
+            h1_trend = ctx['h1_trend']
             signal = best_setup['signal']
             entry = best_setup['entry']
 
-            if "FIBO" in signal:
-                # Fibonacci: show trend + which level to test
-                # Uptrend (BUY): test Fibo on the way up
-                # Downtrend (SELL): test Fibo on the way down
-                trend_text = "nhịp tăng" if is_buy else "nhịp giảm"
-                level_text = "38.2%" if "38" in signal else "61.8%"
-                action = f"Chờ giá test Fibo {level_text} của {trend_text} và {dir_text}"
-            elif "SUPPORT" in signal and "BREAK" in signal:
-                # Support BREAK: break below support, then buy (counter-trend risky)
-                action = f"Chờ giá break hỗ trợ {entry:.0f}, sau đó {dir_text}"
-            elif "SUPPORT" in signal or "S1" in signal:
-                # Support bounce: buy at support
-                action = f"Chờ {dir_text} ở hỗ trợ {entry:.0f}"
-            elif "RESISTANCE" in signal and "BREAK" in signal:
-                # Resistance BREAK: break above resistance, then sell (counter-trend risky)
-                action = f"Chờ giá break cản {entry:.0f}, sau đó {dir_text}"
-            elif "RESISTANCE" in signal or "R1" in signal:
-                # Resistance bounce: sell at resistance
-                action = f"Chờ {dir_text} ở cản {entry:.0f}"
-            elif "MA89" in signal:
-                # MA89 bounce
-                action = f"Chờ {dir_text} ở MA89 ({entry:.0f})"
-            elif "TRENDLINE" in signal:
-                # Trendline break
-                action = f"Chờ giá phá trendline {entry:.0f}, sau đó {dir_text}"
-            else:
-                action = f"Vào lệnh ở {entry:.0f}"
+            action = f"Chờ giá test {ctx['zone_text']} và {dir_text}"
 
-            # Boost confidence for Fibo+rejection confluence (high quality setup)
+            # Boost confidence: OB+FVG chồng nhau / nến xác nhận mạnh
             final_confidence = signal_confidence
-            confluence_label = ""
-            if best_setup.get('fibo_info') and best_setup['fibo_info'].get('confluence'):
-                if best_setup['fibo_info']['confluence'].get('has_confluence'):
-                    final_confidence = min(100, signal_confidence + 15)  # +15 confidence boost
-                    confluence_label = " 🎯 Confluence"
+            boosts = []
+            if ctx['has_confluence']:
+                final_confidence = min(100, final_confidence + 15)
+                boosts.append("OB+FVG")
+            if ctx['candle_strength'] >= 3:
+                final_confidence = min(100, final_confidence + 10)
+                boosts.append("nến mạnh")
+            boost_label = f" 🎯 {'+'.join(boosts)}" if boosts else ""
 
-            # Track alert FIRST to get ID (with TP levels if Fibo)
-            alert_id = post_alert(best_sym, best_tf, best_setup['signal'], best_setup['entry'],
+            # Track alert FIRST to get ID
+            alert_id = post_alert(best_sym, best_tf, signal, entry,
                                  best_setup['sl'], best_setup['tp'], h1_trend, final_confidence, session_name,
                                  tp1=best_setup.get('tp1'), tp3=best_setup.get('tp3'))
 
             msg = f"🔔 Alert #{alert_id}\n"
             msg += f"{emoji} {best_tf.upper()} {best_sym} — {dir_text}\n"
             msg += f"Action: {action}\n"
-            msg += f"SL {best_setup['sl']:.0f}\n"
-
-            # Show TP levels (3 for Fibo, 1 for ATR-based)
-            if best_setup.get('tp1') and best_setup.get('tp3'):
-                msg += f"TP1 {best_setup['tp1']:.0f} | TP2 {best_setup['tp']:.0f} | TP3 {best_setup['tp3']:.0f}\n"
-            else:
-                msg += f"TP {best_setup['tp']:.0f}\n"
-
-            msg += f"Signal: {best_setup['signal']}{confluence_label}\n"
-            msg += f"Conf: {final_confidence:.0f}% | H1: {h1_trend} | Session: {session_name}\n"
+            msg += f"Entry {entry:.1f} | SL {best_setup['sl']:.1f}\n"
+            msg += f"TP1 {best_setup['tp1']:.1f} | TP2 {best_setup['tp']:.1f} | TP3 {best_setup['tp3']:.1f}\n"
+            msg += "――――――――――\n"
+            msg += f"🌊 {ctx['elliott_label']}\n"
+            if ctx['elliott_warning']:
+                msg += f"⚠️ {ctx['elliott_warning']}\n"
+            msg += f"📐 H1: {ctx['h1_event']} — trend {h1_trend}\n"
+            msg += f"📦 Zone: {ctx['zone_text']} | {ctx['pd_text']}\n"
+            if ctx['candle']:
+                msg += f"🕯️ Nến: {ctx['candle']}\n"
+            if ctx['liquidity_pools']:
+                pools_txt = ", ".join(f"{p:.0f}" for p in ctx['liquidity_pools'])
+                msg += f"💧 Liquidity target: {pools_txt}\n"
+            msg += "――――――――――\n"
+            msg += f"Signal: {signal}{boost_label}\n"
+            msg += f"Conf: {final_confidence:.0f}% | Session: {session_name}\n"
             msg += f"Report: /tp {alert_id} or /sl {alert_id} or /exit {alert_id} <price>"
 
             await send_reply(CHANNEL_ID, msg)
@@ -335,15 +255,15 @@ async def handle_command(chat_id, text):
             await send_reply(chat_id, reply)
         elif "/h1" in cmd:
             logger.info(f"/h1 from {chat_id}")
-            reply = await asyncio.to_thread(check_h1_trend)
+            reply = await asyncio.to_thread(format_smc_htf)
             await send_reply(chat_id, reply)
         elif "/m5" in cmd:
             logger.info(f"/m5 from {chat_id}")
-            reply = await asyncio.to_thread(check_m5_scalp)
+            reply = await asyncio.to_thread(format_smc_analysis, "5m")
             await send_reply(chat_id, reply)
         elif "/m15" in cmd:
             logger.info(f"/m15 from {chat_id}")
-            reply = await asyncio.to_thread(check_m15_scalp)
+            reply = await asyncio.to_thread(format_smc_analysis, "15m")
             await send_reply(chat_id, reply)
         elif "/enter" in cmd:
             logger.info(f"/enter from {chat_id}")

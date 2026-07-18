@@ -23,6 +23,35 @@ if TV_AVAILABLE:
 # Fallback yfinance nếu tvDatafeed fail
 import yfinance as yf
 import threading
+import time
+
+# Theo dõi fallback để bot báo user trên Telegram (giá futures có thể lệch/delay).
+# pop_fallback_warning() trả message tối đa 1 lần / 6h — không spam channel.
+_fallback = {'last_ts': 0.0, 'last_symbol': None, 'count': 0, 'last_notified': 0.0}
+
+
+def _record_fallback(symbol):
+    _fallback['last_ts'] = time.time()
+    _fallback['last_symbol'] = symbol
+    _fallback['count'] += 1
+
+
+def pop_fallback_warning(min_gap_hours=6):
+    """Trả message cảnh báo nếu VỪA rớt sang yfinance mà chưa báo trong X giờ.
+
+    Trả None nếu không có gì mới hoặc đã báo gần đây.
+    """
+    if _fallback['last_ts'] == 0:
+        return None
+    if _fallback['last_ts'] <= _fallback['last_notified']:
+        return None  # chưa có fallback mới kể từ lần báo trước
+    if time.time() - _fallback['last_notified'] < min_gap_hours * 3600:
+        return None
+    _fallback['last_notified'] = time.time()
+    return (f"⚠️ Data TradingView đang rớt — bot tạm dùng yfinance "
+            f"(lần cuối: {_fallback['last_symbol']}, tổng {_fallback['count']} lần từ lúc khởi động).\n"
+            f"Giá XAU fallback là futures GC=F, có thể lệch ~$20 và delay 15-30 phút. "
+            f"Alert trong lúc này sẽ ít/tạm dừng do guard chống trộn nguồn.")
 
 # Lock bảo vệ _tv: TvDatafeed dùng 1 websocket chung, KHÔNG thread-safe. Cho phép
 # gọi fetch_symbol từ nhiều asyncio.to_thread (alert loop + command) mà không đụng nhau.
@@ -99,6 +128,7 @@ def fetch_symbol(symbol, timeframe="5m", days=7):
             print(f"[WARN] TradingView fetch fail {symbol}: {e}, fallback yfinance")
 
     # Fallback yfinance — lưu ý XAU→GC=F / XAG→SI=F là futures có thể delay 15-30 min
+    _record_fallback(symbol)
     if symbol in ("XAU", "XAG"):
         print(f"[WARN] {symbol} fallback yfinance ({YF_SYMBOLS[symbol]}) — giá futures có thể delay 15-30 min")
     ticker = yf.Ticker(YF_SYMBOLS[symbol])

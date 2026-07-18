@@ -1,7 +1,7 @@
 # 📖 HƯỚNG DẪN SỬ DỤNG BOT — Zion XAU Signals
 
 > Bot scalp XAU + BTC theo hệ SMC (Smart Money Concepts) + Elliott Wave.
-> Cập nhật: 2026-07-07 (Phase 10.1)
+> Cập nhật: 2026-07-18 (Phase 10.2 — bot học từ mọi lệnh đã đóng, tách riêng XAU/BTC)
 
 ---
 
@@ -99,8 +99,8 @@ Không ghi buy/sell nó tự đoán từ vị trí SL. Gõ nhầm chỗ SL/TP n�
 |------|--------|
 | `/stats` | Thống kê tổng: win rate, P&L, breakdown từng signal |
 | `/trades` | 10 trade gần nhất |
-| `/learning` | Bot học được gì: signal nào ngon, signal nào rác |
-| `/session` | Giờ nào đánh thắng nhiều nhất |
+| `/learning` | Bot học được gì: signal nào ngon, signal nào rác (tách riêng XAU/BTC, ghi rõ bao nhiêu lệnh thật vs backtest) |
+| `/session` | Giờ nào đánh thắng nhiều nhất (tự cập nhật mỗi lần đóng lệnh) |
 
 ---
 
@@ -150,7 +150,7 @@ journalctl -u trading-bot --since "6h ago" -o cat | grep -E "SKIP|SCAN|ALERT|WAT
 | `[SKIP] No good setup...` lặp lại | **Bình thường** — chưa có setup đạt chuẩn, không phải lỗi |
 | `1 alert(s) pending, skip posting` | Có alert treo — chờ watchdog xử (tối đa ~4h) hoặc `/open` rồi đóng tay |
 | `Conflict` / `409` | Có bot thứ 2 chạy đâu đó (laptop?) — kill nó đi |
-| `tvDatafeed ERROR` lặp liên tục | TradingView rớt — bot tự fallback yfinance, giá XAU có thể delay |
+| `tvDatafeed ERROR` lặp liên tục | TradingView rớt — bot tự fallback yfinance, giá XAU có thể delay. Bot sẽ tự đăng ⚠️ cảnh báo lên channel (tối đa 1 lần/6h) |
 | Không có log gì mới | Service chết — `systemctl restart trading-bot` |
 | 5h-7h sáng VN không có gì | **Bình thường** — giờ nghỉ overnight theo thiết kế |
 
@@ -160,10 +160,16 @@ journalctl -u trading-bot --since "6h ago" -o cat | grep -E "SKIP|SCAN|ALERT|WAT
 
 ```bash
 # Chạy trên VPS hoặc laptop đều được (KHÔNG đụng bot)
-cd ~/Trading && python3 backtest.py 30      # backtest 30 ngày
+cd ~/Trading && python3 backtest.py 30           # backtest 30 ngày
+cd ~/Trading && python3 backtest.py 30 --seed    # backtest + BƠM kết quả vào bot học
 ```
 Dùng chung engine với bot live → kết quả backtest phản ánh đúng cách bot đánh.
 Kết quả tham khảo 15 ngày (07/2026): XAU 62% WR +15.9R, BTC 38% WR +4.2R.
+
+**`--seed` là gì?** Bình thường bot cần ~5 lệnh thật mỗi signal mới dám tin (cold-start
+chậm cả tháng). `--seed` lấy kết quả backtest làm "kinh nghiệm khởi điểm" — bot có
+confidence ngay từ ngày đầu. Lệnh thật sau này cộng dồn thêm, `/learning` luôn ghi rõ
+bao nhiêu là lệnh thật, bao nhiêu là backtest. Chạy lại `--seed` sẽ thay seed cũ, không cộng trùng.
 
 ---
 

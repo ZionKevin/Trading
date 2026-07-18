@@ -12,7 +12,7 @@ from smc_check import analyze_symbol_smc, format_smc_analysis, format_smc_htf, S
 from session_manager import get_current_session, should_skip_session, format_session_recommendations, update_hourly_stats
 from trade_tracker import post_alert, close_alert, expire_alert, get_session_alert_count, get_pending_alerts, has_open_trade, format_live_performance
 from learning import get_top_signals
-from fetch import fetch_symbol
+from fetch import fetch_symbol, pop_fallback_warning
 from indicators import IndicatorSet
 from trade_log import log_entry, close_trade, format_stats, list_trades, load_trades, format_daily_stats
 from learning import learn_from_trades, format_learning_report, get_signal_confidence, get_enabled_signals, generate_recommendations
@@ -206,6 +206,11 @@ async def smart_alert_loop():
             now = datetime.now()
             current_hour_utc = now.hour
 
+            # Báo user nếu data vừa rớt sang yfinance (giá có thể lệch/delay)
+            fallback_warn = pop_fallback_warning()
+            if fallback_warn:
+                await send_reply(CHANNEL_ID, fallback_warn)
+
             # Check if there's already a pending alert in current session
             pending = get_pending_alerts()
             if pending:
@@ -216,15 +221,16 @@ async def smart_alert_loop():
             session_info = get_current_session(current_hour_utc)
             session_name = session_info['session']
 
-            # Default signals khi chưa có learning data (bootstrap mode) — 8 signal SMC
-            DEFAULT_SIGNALS = list(SMC_SIGNALS)
+            # Default khi chưa có learning data (bootstrap) — 8 signal × 2 symbol
+            # Phase 10.2: key theo CẶP "SIGNAL@SYMBOL" (học tách XAU/BTC)
+            DEFAULT_SIGNALS = [f"{sig}@{sym}" for sym in symbols for sig in SMC_SIGNALS]
 
-            # Get BEST signal (highest win rate from top 3)
+            # Get BEST pairs (highest win rate from top 3)
             top_signals = get_top_signals(limit=3)
             if not top_signals:
-                # Bootstrap: scan tất cả default signals khi chưa có learning data
+                # Bootstrap: scan tất cả default pairs khi chưa có learning data
                 top_signals = DEFAULT_SIGNALS
-                logger.info(f"[BOOTSTRAP] No learning data — scanning {len(DEFAULT_SIGNALS)} default signals")
+                logger.info(f"[BOOTSTRAP] No learning data — scanning {len(DEFAULT_SIGNALS)} default signal pairs")
 
             # Phân tích SMC mỗi symbol/timeframe ĐÚNG 1 LẦN/cycle, offload thread
             # (mỗi lần phân tích fetch H4+H1+LTF). Trend alignment đã nằm TRONG engine
@@ -241,8 +247,10 @@ async def smart_alert_loop():
             best_signal = None
             signal_confidence = 0
 
-            for candidate_signal in top_signals:
-                candidate_conf = get_signal_confidence(candidate_signal)
+            for candidate_key in top_signals:
+                # Key dạng "BUY_SMC_OB@XAU"; key cũ không có "@" thì match mọi symbol
+                candidate_signal, _, key_sym = candidate_key.partition('@')
+                candidate_conf = get_signal_confidence(candidate_key)
 
                 # Check session skip rule
                 skip_session, _ = should_skip_session(current_hour_utc, candidate_conf)
@@ -250,6 +258,8 @@ async def smart_alert_loop():
                     continue
 
                 for sym in symbols:
+                    if key_sym and sym != key_sym:
+                        continue  # pair học riêng symbol nào chỉ áp cho symbol đó
                     for tf in ("5m", "15m"):
                         setup = setup_cache[(sym, tf)]
                         if setup and setup['signal'] == candidate_signal and setup['volume_is_strong']:

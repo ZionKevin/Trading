@@ -142,6 +142,15 @@ def close_alert(alert_id, result, exit_price=None, tp_level=None):
             alert['pnl'] = pnl
             alert['closed_at'] = datetime.now().isoformat()
 
+            # Cập nhật thống kê theo GIỜ post alert (session learning — trước đây
+            # update_hourly_stats được import nhưng không ai gọi → sessions.json chết)
+            try:
+                from session_manager import update_hourly_stats
+                hour_utc = datetime.fromisoformat(alert['posted_at']).hour
+                update_hourly_stats(hour_utc, pnl)
+            except Exception:
+                pass  # thống kê giờ lỗi không được chặn việc đóng lệnh
+
             # Move to closed trades
             tracker['closed_trades'].append(alert)
             tracker['posted_alerts'].remove(alert)

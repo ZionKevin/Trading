@@ -155,6 +155,22 @@ TP1/TP2/TP3 = liquidity pools H1 thật (equal highs/lows), fallback 1R/2R/3R.
 **Code cũ giữ trong repo** (scalp_check.py, market_structure.py) — check_volume_strength vẫn dùng chung.
 `/m5` `/m15` → SMC analysis · `/h1` → H4 Elliott + H1 structure
 
+**Phase 10.2 (2026-07-18) — Học sống lại + tách cặp:**
+- **FIX BUG LỚN — learning bị đứt dây với hệ SMC:** `learn_from_trades` chỉ đọc `trades.json`
+  (hệ /enter cũ, luôn rỗng) trong khi lệnh SMC đóng vào `alert_tracker.json` → learning học 0 lệnh,
+  bot bootstrap vĩnh viễn với conf 0%. Giờ `_gather_trades()` gộp 3 nguồn:
+  alert_tracker (chính) + trades.json (legacy) + backtest seed. EXPIRED vẫn không tính.
+- **Học theo CẶP `SIGNAL@SYMBOL`** (vd `BUY_SMC_OB@XAU`) — hết méo avg_win/RRR do trộn scale
+  P&L XAU ($10/pip) vs BTC ($0.01/pip). smart_alert_loop parse key bằng `partition('@')`,
+  key cũ không có `@` vẫn chạy (backward compat). Section `symbols` trong learning chỉ đếm lệnh live.
+- **Backtest seed:** `python backtest.py 30 --seed` bơm kết quả backtest vào
+  `learning.json['seed_trades']` (fix cold-start — không phải chờ 5 lệnh thật/signal).
+  Chạy lại --seed = thay seed cũ, không cộng trùng. EXIT (timeout) bị loại. `/learning` hiển thị "X live + Y backtest".
+- **FIX dây đứt thứ 2 — `update_hourly_stats` không ai gọi:** sessions.json không bao giờ update
+  → Option D (lọc theo giờ thắng/thua) chết. Giờ `close_alert` gọi nó theo giờ post alert.
+- **Cảnh báo fallback yfinance lên Telegram:** `fetch.pop_fallback_warning()` — bot đăng ⚠️ lên channel
+  khi data rớt sang yfinance (giá XAU futures lệch ~$20), tối đa 1 lần/6h, không spam.
+
 **Phase 10.1 (cùng ngày):**
 - **`/day` (alias `/teach`) gõ tự do:** parser tự hiểu mọi thứ tự — `/day buy 4150 sl 4140 tp 4170 test OB H1`,
   `/day 4150 4140 4170 lý do`, tự nhận BUY/SELL từ vị trí SL, tự nhận BTC/XAU, tự đảo SL/TP nếu gõ nhầm chỗ.
@@ -347,8 +363,8 @@ python backtest.py                 # 30-day backtest all symbols
 5. **Chạy bot local = 409 Conflict** với VPS. Test bằng cách gọi hàm trực tiếp, không chạy `python telegram_bot_v2.py`.
 
 ### TODO còn treo (ưu tiên từ trên xuống)
-- [ ] Learning theo cặp (signal + symbol) — hiện gộp XAU/BTC chung 1 rổ, P&L khác scale làm méo avg_win/RRR
-- [ ] Hạ MIN_TRADES_PER_SIGNAL 5 → 3 hoặc bơm data backtest vào learning (cold-start chậm: 8 signals × 5 trades mới có confidence)
+- [x] ~~Learning theo cặp (signal + symbol)~~ → Phase 10.2: key `SIGNAL@SYMBOL`
+- [x] ~~Bơm data backtest vào learning~~ → Phase 10.2: `python backtest.py 30 --seed`
 - [ ] Thống kê TP level nào hit nhiều nhất per signal → gợi ý "signal X nên chốt TP1"
 - [ ] Backtest thêm slippage/spread; backtest khung 5m (hiện chỉ 15m)
 - [ ] TradingEconomics API cho lịch kinh tế thật (macro_analysis.py đang hardcode)
@@ -409,3 +425,4 @@ Default 0.2 lot, SL $60 (6 pips × $10 × 0.2), TP $200 (10 pips × $10 × 0.2)
   - Session map fix: ASIAN = 0-8 UTC (7h-15h VN), bỏ gate conf>=75 phiên Á; OVERNIGHT chỉ còn 22-0 UTC (cc4adc3)
   - Fix H1 trend NGƯỢC trong alert filter (BUY chỉ pass khi H1 giảm!) + /h1 hiển thị ngược (ff3ce33)
 - **2026-07-07 Phase 10 (SMC Overhaul):** Thay toàn bộ hệ signal bằng SMC (BOS/CHoCH + OB/FVG + nến Nhật) + Elliott H4 bias. Chỉ đánh XAU + BTC. 4 module mới: smc_structure, candle_patterns, elliott_wave, smc_check. fetch.py thêm khung 4h (yfinance fallback resample từ 1h).
+- **2026-07-18 Phase 10.2 (Học sống lại):** Fix learning đứt dây với alert_tracker (học 0 lệnh từ 07/07) + học theo cặp SIGNAL@SYMBOL + backtest --seed fix cold-start + nối update_hourly_stats (sessions.json chết từ đầu) + cảnh báo fallback yfinance lên Telegram.

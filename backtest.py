@@ -2,7 +2,8 @@
 """Backtest hệ SMC (Phase 10) trên data lịch sử — walk-forward bar-by-bar.
 
 Dùng CHUNG engine analyze_smc_core với live bot → backtest gì, live chạy nấy.
-Chạy: python backtest.py [days]     (default 25 ngày, khung entry M15)
+Chạy: python backtest.py [days]          (default 25 ngày, khung entry M15)
+      python backtest.py [days] --seed   (bơm kết quả vào learning.json — fix cold-start)
 """
 import sys
 from fetch import fetch_symbol
@@ -32,7 +33,7 @@ def _close_trade(tr, exit_price, result, exit_time, trades, symbol):
     risk = abs(tr['entry'] - tr['sl'])
     pnl_usd = (exit_price - tr['entry']) * get_risk_per_pip(symbol) * side
     pnl_r = ((exit_price - tr['entry']) * side / risk) if risk > 0 else 0
-    trades.append({**tr, 'exit': exit_price, 'result': result,
+    trades.append({**tr, 'symbol': symbol, 'exit': exit_price, 'result': result,
                    'exit_time': exit_time, 'pnl_usd': pnl_usd, 'pnl_r': pnl_r})
 
 
@@ -162,8 +163,37 @@ def format_report(symbol, trades):
     return "\n".join(lines)
 
 
+def seed_learning(all_trades):
+    """Bơm kết quả backtest vào learning.json làm data khởi động (fix cold-start).
+
+    Backtest dùng CHUNG engine với live bot nên kết quả đại diện được cho signal.
+    Lệnh live sau này cộng dồn thêm vào — /learning hiển thị tách "live vs backtest".
+    Chạy lại --seed sẽ THAY seed cũ (không cộng trùng).
+    """
+    from learning import load_learning, save_learning, learn_from_trades
+    seed = []
+    for t in all_trades:
+        if t['result'] == 'EXIT':
+            continue  # timeout không chạm SL/TP — live cũng không tính (expire)
+        seed.append({
+            'signal': t['signal'],
+            'symbol': t['symbol'],
+            'pnl': t['pnl_usd'],
+            # Chuẩn hoá ISO (có chữ T) để khớp format posted_at của lệnh live
+            'entry_time': str(t['time']).replace(' ', 'T'),
+        })
+    learning = load_learning()
+    learning['seed_trades'] = seed
+    save_learning(learning)
+    learn_from_trades()  # tính lại toàn bộ stats với seed mới
+    print(f"\n✅ Đã bơm {len(seed)} lệnh backtest vào learning.json (seed).")
+    print("Bot dùng làm confidence khởi điểm — gõ /learning trên Telegram để xem.")
+
+
 def main():
-    days = int(sys.argv[1]) if len(sys.argv) > 1 else 25
+    args = [a for a in sys.argv[1:] if not a.startswith('-')]
+    do_seed = '--seed' in sys.argv
+    days = int(args[0]) if args else 25
     print(f"SMC BACKTEST — {days} ngày, khung entry {ENTRY_TF}, symbols: {SYMBOLS}")
     print("(Walk-forward bar-by-bar, one-trade-at-a-time, cùng engine với live bot)")
 
@@ -184,6 +214,12 @@ def main():
         print(f"\n{'=' * 40}")
         print(f"TỔNG: {len(all_trades)} trades | WR {wins / d * 100 if d else 0:.0f}% | {total_r:+.1f}R")
         print("Lưu ý: chưa tính slippage/spread. Kết quả quá khứ không đảm bảo tương lai.")
+
+    if do_seed:
+        if all_trades:
+            seed_learning(all_trades)
+        else:
+            print("\n--seed bỏ qua: 0 trades, không có gì để bơm.")
 
 
 if __name__ == "__main__":

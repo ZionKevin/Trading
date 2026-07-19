@@ -66,14 +66,17 @@ def _fetch_events():
     return _state['events']  # có gì xài nấy (kể cả None)
 
 
-def _high_usd_events():
-    """Lọc tin ĐỎ (impact High) của USD, parse giờ về UTC aware.
+def _high_events(country='USD'):
+    """Lọc tin ĐỎ (impact High), parse giờ về UTC aware.
 
-    Returns: list {'title', 'time' (datetime UTC)} sort theo giờ.
+    country='USD' (mặc định) | None = mọi ngoại tệ.
+    Returns: list {'title', 'country', 'time' (datetime UTC)} sort theo giờ.
     """
     out = []
     for e in _fetch_events() or []:
-        if e.get('impact') != 'High' or e.get('country') != 'USD':
+        if e.get('impact') != 'High':
+            continue
+        if country is not None and e.get('country') != country:
             continue
         try:
             ts = datetime.fromisoformat(e['date'])  # dạng "2026-07-18T08:30:00-04:00"
@@ -81,9 +84,14 @@ def _high_usd_events():
             continue
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
-        out.append({'title': e.get('title', '?'), 'time': ts.astimezone(timezone.utc)})
+        out.append({'title': e.get('title', '?'), 'country': e.get('country', '?'),
+                    'time': ts.astimezone(timezone.utc)})
     out.sort(key=lambda x: x['time'])
     return out
+
+
+def _high_usd_events():
+    return _high_events('USD')
 
 
 def check_news_blackout():
@@ -102,10 +110,25 @@ def check_news_blackout():
 
 def format_upcoming_news():
     """Lịch tin đỏ USD tuần này (giờ VN) — cho lệnh /news."""
+    raw = _fetch_events()
+    if raw is None:
+        # Feed thật sự chết (mạng/nguồn lỗi) — khác với "tuần không có tin"
+        return ("⚠️ Không lấy được lịch tin (feed/mạng lỗi) — thử /news lại sau.\n"
+                "Bot vẫn chạy bình thường, chỉ là tạm không có news filter.")
+
     events = _high_usd_events()
     if not events:
-        return ("Không lấy được lịch tin (feed lỗi hoặc tuần này không có tin đỏ USD).\n"
-                "Bot vẫn chạy bình thường — chỉ là không có news filter.")
+        # Feed sống nhưng tuần này trống tin đỏ USD → nói rõ, kèm tin đỏ ngoại tệ khác tham khảo
+        lines = ["📅 Tuần này KHÔNG có tin đỏ USD ✅",
+                 "Tuần dễ thở — không NFP/CPI/FOMC, bot không phải khoá alert lần nào."]
+        others = _high_events(country=None)
+        if others:
+            lines.append("")
+            lines.append("Tin đỏ ngoại tệ khác (tham khảo, bot KHÔNG khoá alert):")
+            for ev in others[:8]:
+                vn = ev['time'].astimezone(VN_TZ)
+                lines.append(f"• {vn:%a %d/%m %H:%M} — {ev['country']} {ev['title']}")
+        return "\n".join(lines)
 
     now = datetime.now(timezone.utc)
     lines = ["📅 TIN ĐỎ USD TUẦN NÀY (giờ VN)", "=" * 34]

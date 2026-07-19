@@ -263,3 +263,83 @@ def find_liquidity_pools(structure, price, atr, side='ABOVE', eq_tol_atr=0.25):
         else:
             pools.append(lv)
     return pools
+
+
+# ============================================================
+# Phase 10.3 — Session liquidity (Asian range sweep) + Killzone + Fibo OTE
+# ============================================================
+
+# Giờ UTC. Phiên Á 0-7 UTC (7h-14h VN). London Killzone 7-10 UTC (14h-17h VN),
+# NY Killzone 12-15 UTC (19h-22h VN) — theo khung ICT kinh điển.
+ASIAN_START, ASIAN_END = 0, 7
+LONDON_KZ = (7, 10)
+NY_KZ = (12, 15)
+
+
+def asian_range(df, ref_ts):
+    """High/Low phiên Á (0-7h UTC) của NGÀY ref_ts. Index df phải là UTC naive.
+
+    Returns {'high', 'low', 'bars'} hoặc None nếu chưa đủ nến (chưa qua phiên Á).
+    """
+    try:
+        date = ref_ts.date()
+    except AttributeError:
+        return None
+    mask = (df.index.date == date) & (df.index.hour >= ASIAN_START) & (df.index.hour < ASIAN_END)
+    bars = df[mask]
+    if len(bars) < 6:  # dưới 6 nến (30' M5) = range chưa có nghĩa
+        return None
+    return {'high': float(bars['High'].max()), 'low': float(bars['Low'].min()),
+            'bars': len(bars)}
+
+
+def detect_asian_sweep(df, ar, direction, ref_ts):
+    """Judas swing: sau phiên Á, giá QUÉT đáy (BUY) / đỉnh (SELL) Asian range
+    rồi thu hồi lại chưa? — liquidity grab kinh điển lúc London/NY mở cửa.
+
+    BUY:  có nến sau 7h UTC low < asian_low, và close hiện tại đã đòi lại trên asian_low.
+    SELL: có nến sau 7h UTC high > asian_high, và close hiện tại đã tụt lại dưới asian_high.
+    """
+    if ar is None or ref_ts.hour < ASIAN_END:
+        return False  # còn trong phiên Á — chưa có chuyện quét
+    date = ref_ts.date()
+    post = df[(df.index.date == date) & (df.index.hour >= ASIAN_END)]
+    if post.empty:
+        return False
+    close = float(df['Close'].iloc[-1])
+    if direction == 'UP':
+        return float(post['Low'].min()) < ar['low'] and close > ar['low']
+    else:
+        return float(post['High'].max()) > ar['high'] and close < ar['high']
+
+
+def in_killzone(ref_ts):
+    """Đang trong killzone không? Returns 'LONDON' | 'NY' | None."""
+    try:
+        h = ref_ts.hour
+    except AttributeError:
+        return None
+    if LONDON_KZ[0] <= h < LONDON_KZ[1]:
+        return 'LONDON'
+    if NY_KZ[0] <= h < NY_KZ[1]:
+        return 'NY'
+    return None
+
+
+def fibo_ote(price_level, range_high, range_low, direction):
+    """OTE (Optimal Trade Entry) — vùng hồi Fibo 61.8%-79% của dealing range.
+
+    BUY: sau leg tăng low→high, pullback về 61.8-79% (tính từ high xuống)
+         = dải [low + 21% range, low + 38.2% range].
+    Đây là Fibo theo kiểu ICT/SMC — dùng làm confluence, KHÔNG phải hệ signal riêng.
+    """
+    if range_high is None or range_low is None:
+        return False
+    rng = range_high - range_low
+    if rng <= 0:
+        return False
+    if direction == 'UP':
+        lo, hi = range_low + 0.21 * rng, range_low + 0.382 * rng
+    else:
+        lo, hi = range_high - 0.382 * rng, range_high - 0.21 * rng
+    return lo <= price_level <= hi

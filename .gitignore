@@ -9,4 +9,5 @@ learning.json
 alert_tracker.json
 trading_profile.json
 sessions.json
+news_cache.json
 daily_report.csv

@@ -15,6 +15,7 @@ from fetch import fetch_symbol
 from smc_structure import (
     analyze_structure, find_order_blocks, find_fvg,
     find_liquidity_pools, premium_discount, calc_atr,
+    asian_range, detect_asian_sweep, in_killzone, fibo_ote,
 )
 from candle_patterns import detect_confirmation
 from elliott_wave import analyze_elliott
@@ -59,6 +60,18 @@ def _fetch_context(symbol, tf):
             f"{symbol}: data 3 khung lệch nhau {closes} — nghi trộn nguồn TV/yfinance, bỏ vòng này")
 
     return df_h4, df_h1, df_ltf
+
+
+def _utc_naive(df):
+    """Ép index về UTC naive — logic giờ (Asian range, killzone) cần chuẩn UTC.
+
+    TV trả naive UTC sẵn; yfinance fallback trả tz-aware (US/Eastern cho GC=F)
+    → phải convert, không thì range phiên Á lệch 4-5 tiếng.
+    """
+    if getattr(df.index, 'tz', None) is not None:
+        df = df.copy()
+        df.index = df.index.tz_convert('UTC').tz_localize(None)
+    return df
 
 
 def _zone_tap(df_ltf, zone, direction):
@@ -118,6 +131,10 @@ def analyze_smc_core(symbol, tf, df_h4, df_h1, df_ltf):
     if len(df_ltf) < 50 or len(df_h1) < 50:
         return None
 
+    df_ltf = _utc_naive(df_ltf)
+    df_h1 = _utc_naive(df_h1)
+    df_h4 = _utc_naive(df_h4)
+
     # ===== Khung to =====
     elliott = analyze_elliott(df_h4)
     h1 = analyze_structure(df_h1, left=3, right=3)
@@ -171,6 +188,15 @@ def analyze_smc_core(symbol, tf, df_h4, df_h1, df_ltf):
     # ===== Nến Nhật xác nhận =====
     candle = detect_confirmation(df_ltf, direction=direction)
 
+    # ===== Phase 10.3 confluence: Asian sweep + Killzone + Fibo OTE =====
+    # ref_ts = giờ nến cuối (KHÔNG dùng datetime.now() — để backtest chạy đúng lịch sử)
+    ref_ts = df_ltf.index[-1]
+    ar = asian_range(df_ltf, ref_ts)
+    asian_swept = detect_asian_sweep(df_ltf, ar, direction, ref_ts)
+    killzone = in_killzone(ref_ts)
+    zone_mid = (zone['top'] + zone['bottom']) / 2
+    is_ote = fibo_ote(zone_mid, h1['range_high'], h1['range_low'], direction)
+
     # ===== Signal name =====
     side = 'BUY' if is_buy else 'SELL'
     base = f"{side}_SMC_{zone_type}"
@@ -187,11 +213,16 @@ def analyze_smc_core(symbol, tf, df_h4, df_h1, df_ltf):
         sl_dist = max(sl_min, min(raw_dist, sl_max))
         sl = entry - sl_dist
         pools = find_liquidity_pools(h1, entry, atr_h1, side='ABOVE')
+        # Asian high = liquidity thật (cụm stop trên đỉnh phiên Á) → thêm vào target
+        if ar and ar['high'] > entry:
+            pools = sorted(set(pools + [ar['high']]))
     else:
         raw_dist = (zone['top'] + 0.5 * atr_ltf) - entry
         sl_dist = max(sl_min, min(raw_dist, sl_max))
         sl = entry + sl_dist
         pools = find_liquidity_pools(h1, entry, atr_h1, side='BELOW')
+        if ar and ar['low'] < entry:
+            pools = sorted(set(pools + [ar['low']]), reverse=True)
 
     tp1, tp2, tp3 = _pick_tp(entry, sl_dist, pools, direction)
 
@@ -220,6 +251,11 @@ def analyze_smc_core(symbol, tf, df_h4, df_h1, df_ltf):
         'pd_text': pd_text,
         'has_confluence': has_confluence,
         'liquidity_pools': pools[:3],
+        # Phase 10.3
+        'asian_range': ar,
+        'asian_sweep': asian_swept,
+        'killzone': killzone,
+        'in_ote': is_ote,
     }
 
     return {
@@ -254,10 +290,14 @@ def format_smc_analysis(tf="5m"):
         emoji = _EMOJI.get(sym, '')
         try:
             df_h4, df_h1, df_ltf = _fetch_context(sym, tf)
+            df_ltf = _utc_naive(df_ltf)
             elliott = analyze_elliott(df_h4)
             h1 = analyze_structure(df_h1)
             price = float(df_ltf['Close'].iloc[-1])
             pd_zone = premium_discount(price, h1['range_high'], h1['range_low'])
+            ref_ts = df_ltf.index[-1]
+            ar = asian_range(df_ltf, ref_ts)
+            kz = in_killzone(ref_ts)
 
             ev = h1['last_event']
             ev_text = "chưa có"
@@ -267,6 +307,15 @@ def format_smc_analysis(tf="5m"):
             lines.append(f"{emoji} {sym} — {price:.1f}")
             lines.append(f"  {elliott['label']}")
             lines.append(f"  H1: trend {h1['trend']} | {ev_text} | {pd_zone}")
+            if ar:
+                sweep_note = ""
+                if detect_asian_sweep(df_ltf, ar, 'UP', ref_ts):
+                    sweep_note = " — đã quét ĐÁY (mồi BUY)"
+                elif detect_asian_sweep(df_ltf, ar, 'DOWN', ref_ts):
+                    sweep_note = " — đã quét ĐỈNH (mồi SELL)"
+                lines.append(f"  Asian range: {ar['low']:.0f}–{ar['high']:.0f}{sweep_note}")
+            if kz:
+                lines.append(f"  ⏰ Đang trong {'London' if kz == 'LONDON' else 'New York'} Killzone")
 
             # Zones LTF theo hướng H1
             if h1['trend'] in ('UP', 'DOWN'):

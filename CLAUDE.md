@@ -171,6 +171,22 @@ TP1/TP2/TP3 = liquidity pools H1 thật (equal highs/lows), fallback 1R/2R/3R.
 - **Cảnh báo fallback yfinance lên Telegram:** `fetch.pop_fallback_warning()` — bot đăng ⚠️ lên channel
   khi data rớt sang yfinance (giá XAU futures lệch ~$20), tối đa 1 lần/6h, không spam.
 
+**Phase 10.3 (2026-07-18) — Session liquidity + News filter + Fibo OTE:**
+- **Asian range sweep (Judas swing):** `smc_structure.asian_range/detect_asian_sweep` —
+  phiên Á 0-7 UTC; sau 7 UTC nếu giá quét đáy/đỉnh range Á RỒI thu hồi (close đòi lại)
+  → confluence +15% conf cho hướng tương ứng. Asian high/low cũng được thêm vào TP pools.
+- **Killzone:** London 7-10 UTC / NY 12-15 UTC (`in_killzone`) → +5% conf.
+- **Fibo OTE (ICT):** zone mid nằm trong dải hồi 61.8-79% dealing range H1 (`fibo_ote`)
+  → +10% conf. Fibo là TẦNG CONFLUENCE trong SMC, KHÔNG phải hệ signal riêng (đừng hồi sinh hệ Fibo cũ).
+- **News blackout:** `news_filter.py` — lịch THẬT từ ForexFactory feed
+  (nfs.faireconomy.media/ff_calendar_thisweek.json, free không cần key). Tin đỏ (High) USD:
+  khoá alert 30' trước → 30' sau, đăng ⏸️ 1 lần/tin. FAIL-OPEN: feed chết → bot chạy bình thường.
+  Cache memory + đĩa (news_cache.json, gitignored, TTL 6h/48h). Lệnh mới: `/news` (giờ VN).
+- **`_utc_naive` trong smc_check:** ép index về UTC naive trước khi phân tích — yfinance
+  fallback trả tz-aware US/Eastern, không convert thì Asian range lệch 4-5 tiếng.
+- Tất cả confluence nằm TRONG `analyze_smc_core` (dùng ref_ts = nến cuối, không dùng now())
+  → backtest tự động ăn theo. News filter chỉ live (không có trong backtest).
+
 **Phase 10.1 (cùng ngày):**
 - **`/day` (alias `/teach`) gõ tự do:** parser tự hiểu mọi thứ tự — `/day buy 4150 sl 4140 tp 4170 test OB H1`,
   `/day 4150 4140 4170 lý do`, tự nhận BUY/SELL từ vị trí SL, tự nhận BTC/XAU, tự đảo SL/TP nếu gõ nhầm chỗ.
@@ -367,7 +383,7 @@ python backtest.py                 # 30-day backtest all symbols
 - [x] ~~Bơm data backtest vào learning~~ → Phase 10.2: `python backtest.py 30 --seed`
 - [ ] Thống kê TP level nào hit nhiều nhất per signal → gợi ý "signal X nên chốt TP1"
 - [ ] Backtest thêm slippage/spread; backtest khung 5m (hiện chỉ 15m)
-- [ ] TradingEconomics API cho lịch kinh tế thật (macro_analysis.py đang hardcode)
+- [x] ~~Lịch kinh tế thật~~ → Phase 10.3: news_filter.py dùng ForexFactory feed (macro_analysis.py cũ vẫn hardcode — có thể port sang news_filter sau)
 - [ ] Auto-trade execution (Oanda V20...) — user CHƯA muốn, hỏi lại trước khi làm
 
 ---
@@ -426,3 +442,4 @@ Default 0.2 lot, SL $60 (6 pips × $10 × 0.2), TP $200 (10 pips × $10 × 0.2)
   - Fix H1 trend NGƯỢC trong alert filter (BUY chỉ pass khi H1 giảm!) + /h1 hiển thị ngược (ff3ce33)
 - **2026-07-07 Phase 10 (SMC Overhaul):** Thay toàn bộ hệ signal bằng SMC (BOS/CHoCH + OB/FVG + nến Nhật) + Elliott H4 bias. Chỉ đánh XAU + BTC. 4 module mới: smc_structure, candle_patterns, elliott_wave, smc_check. fetch.py thêm khung 4h (yfinance fallback resample từ 1h).
 - **2026-07-18 Phase 10.2 (Học sống lại):** Fix learning đứt dây với alert_tracker (học 0 lệnh từ 07/07) + học theo cặp SIGNAL@SYMBOL + backtest --seed fix cold-start + nối update_hourly_stats (sessions.json chết từ đầu) + cảnh báo fallback yfinance lên Telegram.
+- **2026-07-18 Phase 10.3 (Session liquidity + News):** Asian range sweep (Judas swing) +15% conf, Killzone London/NY +5%, Fibo OTE 61.8-79% +10% (confluence trong SMC, không phải hệ riêng), news blackout ±30' quanh tin đỏ USD (ForexFactory feed thật, fail-open), lệnh /news, fix tz yfinance fallback (_utc_naive).

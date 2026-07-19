@@ -1,7 +1,7 @@
 # 📖 HƯỚNG DẪN SỬ DỤNG BOT — Zion XAU Signals
 
 > Bot scalp XAU + BTC theo hệ SMC (Smart Money Concepts) + Elliott Wave.
-> Cập nhật: 2026-07-18 (Phase 10.2 — bot học từ mọi lệnh đã đóng, tách riêng XAU/BTC)
+> Cập nhật: 2026-07-18 (Phase 10.3 — quét phiên Á/Killzone, Fibo OTE, tự né tin đỏ)
 
 ---
 
@@ -23,6 +23,13 @@ Hệ này kén, thà im còn hơn báo bậy.
 - Mỗi lúc chỉ có **1 alert sống** (one-at-a-time). Alert cũ phải đóng thì mới có alert mới.
 - **Watchdog** tự dọn: giá chạm SL/TP mà quên báo → bot tự đóng trong ~10 phút.
   Alert treo 4 tiếng không chạm gì → tự huỷ (không tính thắng thua).
+- **Tự né tin đỏ (Phase 10.3):** 30 phút trước → 30 phút sau tin đỏ USD (NFP, CPI, FOMC...)
+  bot KHOÁ alert + đăng ⏸️ thông báo. Lịch tin lấy thật từ ForexFactory. Gõ `/news` xem lịch tuần.
+- **Bot biết bài quét phiên Á (Judas swing):** London mở cửa (14h VN) hay quét đáy/đỉnh
+  range phiên Á rồi mới chạy thật. Alert nào có setup quét-rồi-thu-hồi sẽ có dòng 🧹
+  và confidence cộng thêm. Killzone London (14h-17h VN) / NY (19h-22h VN) cũng được cộng điểm.
+- **Fibo OTE:** zone entry nằm trong vùng hồi 61.8–79% (Optimal Trade Entry theo ICT)
+  → alert có dòng 📏 + cộng confidence. Fibo giờ là 1 tầng lọc trong SMC, không phải hệ riêng.
 
 ---
 
@@ -38,10 +45,13 @@ TP1 4147.0 | TP2 4157.3 | TP3 4169.0
 🌊 H4 sóng đẩy ~3 tăng ↑          ← sóng Elliott khung to
 📐 H1: BOS ↑ @ 4129 — trend UP    ← cấu trúc vừa phá đỉnh, xu hướng tăng
 📦 Zone: OB M15 4132–4136 | Discount (vùng mua rẻ)
+📏 Zone nằm trong Fibo OTE (hồi 61.8–79%)     ← vùng hồi đẹp nhất theo ICT
+🧹 Đã quét ĐÁY phiên Á (4128) — liquidity grab ủng hộ BUY   ← bài Judas swing
+⏰ Đang trong London Killzone — giờ vàng chạy mạnh
 🕯️ Nến: Nến nhấn chìm tăng (Bullish Engulfing)
 💧 Liquidity target: 4147, 4157, 4169   ← các cụm stop phía trên (mục tiêu giá)
 ――――――――――
-Signal: BUY_SMC_OB_CANDLE 🎯 OB+FVG
+Signal: BUY_SMC_OB_CANDLE 🎯 OB+FVG+quét Asian+Fibo OTE
 Conf: 25% | Session: ASIAN
 Report: /tp 3 or /sl 3 or /exit 3 <price>
 ```
@@ -64,6 +74,7 @@ SL luôn đặt đúng giá bot đưa (đã clamp 100-150 pip cho XAU).
 | `/price` | Giá hiện tại 6 symbol + RSI |
 | `/trend` | Trend H1 các symbol |
 | `/status` | Tổng quan thị trường |
+| `/news` | ⭐ Lịch tin đỏ USD tuần này (data THẬT từ ForexFactory, giờ VN) |
 | `/macro` | Lịch kinh tế + sự kiện quan trọng (CPI, NFP, FOMC) |
 
 ### ✅ Báo kết quả alert (QUAN TRỌNG — để bot học)

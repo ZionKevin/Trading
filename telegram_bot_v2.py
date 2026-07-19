@@ -18,6 +18,7 @@ from trade_log import log_entry, close_trade, format_stats, list_trades, load_tr
 from learning import learn_from_trades, format_learning_report, get_signal_confidence, get_enabled_signals, generate_recommendations
 from trading_profile import add_taught_trade, format_profile, list_taught_trades, parse_teach_text, forget_taught_trade
 from macro_analysis import generate_daily_report, generate_pre_event_alert, format_macro_summary
+from news_filter import check_news_blackout, format_upcoming_news
 from datetime import datetime, timedelta
 import pytz
 
@@ -35,6 +36,7 @@ last_update_id = 0
 last_alert_time = {}  # Track last alert per symbol+timeframe+signal
 last_alert_entry = {}  # Track last entry price for duplicate detection
 alert_count_today = 0  # Track alerts posted today
+_news_notified = set()  # tin đã báo "tạm dừng" — tránh spam mỗi cycle 5'
 ALERT_COOLDOWN = 1800  # 30 minutes (not 5 min!) — prevent spam
 PRICE_MOVE_THRESHOLD = 2  # Only alert if entry price moved >2 pips from last alert
 
@@ -218,6 +220,23 @@ async def smart_alert_loop():
                 await asyncio.sleep(300)
                 continue
 
+            # News blackout: ±30' quanh tin đỏ USD (NFP/CPI/FOMC) → không bắn alert
+            # (nến tin spike bay SL trong 1 giây). Fail-open: feed lỗi → chạy bình thường.
+            blackout, news_ev = await asyncio.to_thread(check_news_blackout)
+            if blackout:
+                news_key = f"{news_ev['title']}@{news_ev['time'].isoformat()}"
+                if news_key not in _news_notified:
+                    _news_notified.add(news_key)
+                    vn_time = news_ev['time'].astimezone(pytz.timezone('Asia/Ho_Chi_Minh'))
+                    await send_reply(CHANNEL_ID,
+                        f"⏸️ Tạm dừng alert: tin đỏ USD sắp ra/vừa ra\n"
+                        f"📰 {news_ev['title']} — {vn_time:%H:%M} giờ VN\n"
+                        f"Khoá 30' trước → 30' sau tin. Đừng vào lệnh mới lúc này, "
+                        f"spike tin dễ bay SL. /news xem lịch cả tuần.")
+                logger.info(f"[NEWS] Blackout: {news_ev['title']} @ {news_ev['time']}")
+                await asyncio.sleep(300)
+                continue
+
             session_info = get_current_session(current_hour_utc)
             session_name = session_info['session']
 
@@ -293,7 +312,7 @@ async def smart_alert_loop():
 
             action = f"Chờ giá test {ctx['zone_text']} và {dir_text}"
 
-            # Boost confidence: OB+FVG chồng nhau / nến xác nhận mạnh
+            # Boost confidence: OB+FVG chồng / nến mạnh / quét Asian / Fibo OTE / killzone
             final_confidence = signal_confidence
             boosts = []
             if ctx['has_confluence']:
@@ -302,6 +321,15 @@ async def smart_alert_loop():
             if ctx['candle_strength'] >= 3:
                 final_confidence = min(100, final_confidence + 10)
                 boosts.append("nến mạnh")
+            if ctx.get('asian_sweep'):
+                final_confidence = min(100, final_confidence + 15)
+                boosts.append("quét Asian")
+            if ctx.get('in_ote'):
+                final_confidence = min(100, final_confidence + 10)
+                boosts.append("Fibo OTE")
+            if ctx.get('killzone'):
+                final_confidence = min(100, final_confidence + 5)
+                boosts.append("killzone")
             boost_label = f" 🎯 {'+'.join(boosts)}" if boosts else ""
 
             # Track alert FIRST to get ID
@@ -320,6 +348,17 @@ async def smart_alert_loop():
                 msg += f"⚠️ {ctx['elliott_warning']}\n"
             msg += f"📐 H1: {ctx['h1_event']} — trend {h1_trend}\n"
             msg += f"📦 Zone: {ctx['zone_text']} | {ctx['pd_text']}\n"
+            if ctx.get('in_ote'):
+                msg += "📏 Zone nằm trong Fibo OTE (hồi 61.8–79%)\n"
+            if ctx.get('asian_sweep') and ctx.get('asian_range'):
+                ar = ctx['asian_range']
+                if is_buy:
+                    msg += f"🧹 Đã quét ĐÁY phiên Á ({ar['low']:.0f}) — liquidity grab ủng hộ BUY\n"
+                else:
+                    msg += f"🧹 Đã quét ĐỈNH phiên Á ({ar['high']:.0f}) — liquidity grab ủng hộ SELL\n"
+            if ctx.get('killzone'):
+                kz_name = 'London' if ctx['killzone'] == 'LONDON' else 'New York'
+                msg += f"⏰ Đang trong {kz_name} Killzone — giờ vàng chạy mạnh\n"
             if ctx['candle']:
                 msg += f"🕯️ Nến: {ctx['candle']}\n"
             if ctx['liquidity_pools']:
@@ -538,6 +577,10 @@ async def handle_command(chat_id, text):
         elif "/mystyle" in cmd:
             logger.info(f"/mystyle from {chat_id}")
             reply = format_profile()
+            await send_reply(chat_id, reply)
+        elif "/news" in cmd:
+            logger.info(f"/news from {chat_id}")
+            reply = await asyncio.to_thread(format_upcoming_news)
             await send_reply(chat_id, reply)
         elif "/macro" in cmd:
             logger.info(f"/macro from {chat_id}")

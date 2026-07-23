@@ -628,8 +628,13 @@ async def run_bot():
 
 
 async def auto_learning_task():
-    """Auto-learn every hour: analyze trades, update signal confidence, post recommendations."""
-    logger.info("[LEARNING] Auto-learning task started (runs hourly)")
+    """Auto-learn every hour: analyze trades, update signal confidence.
+
+    CHỈ post khuyến nghị khi nội dung THAY ĐỔI so với lần post trước
+    (có lệnh mới đóng làm số liệu đổi) — trước đây post y hệt mỗi giờ, spam channel.
+    """
+    logger.info("[LEARNING] Auto-learning task started (runs hourly, post on change)")
+    last_posted_recs = None
 
     while True:
         try:
@@ -643,12 +648,15 @@ async def auto_learning_task():
             learn_from_trades()
             logger.info("[LEARNING] Updated signal confidence scores")
 
-            # Get recommendations
+            # Get recommendations — chỉ post khi ĐỔI
             recs = generate_recommendations()
-            if recs:
+            if recs and recs != last_posted_recs:
+                last_posted_recs = recs
                 msg = "[AUTO-LEARNING UPDATE]\n" + recs
                 await send_reply(CHANNEL_ID, msg)
-                logger.info("[LEARNING] Posted recommendations to channel")
+                logger.info("[LEARNING] Posted recommendations to channel (changed)")
+            elif recs:
+                logger.info("[LEARNING] Recommendations unchanged — skip posting")
 
         except Exception as e:
             logger.error(f"auto_learning_task error: {e}")

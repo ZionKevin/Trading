@@ -26,30 +26,36 @@ import threading
 import time
 
 # Theo dõi fallback để bot báo user trên Telegram (giá futures có thể lệch/delay).
-# pop_fallback_warning() trả message tối đa 1 lần / 6h — không spam channel.
-_fallback = {'last_ts': 0.0, 'last_symbol': None, 'count': 0, 'last_notified': 0.0}
+# tvDatafeed nologin rớt VẶT vài lần/ngày là bình thường (<1% số lần fetch) —
+# chỉ cảnh báo channel khi rớt DÀY (>= FALLBACK_BURST lần trong FALLBACK_WINDOW_MIN
+# phút = sự cố thật), rớt lẻ tẻ chỉ ghi log. Tối đa 1 cảnh báo / 6h.
+from collections import deque
+
+FALLBACK_BURST = 5
+FALLBACK_WINDOW_MIN = 30
+_fallback = {'events': deque(maxlen=100), 'last_symbol': None, 'count': 0, 'last_notified': 0.0}
 
 
 def _record_fallback(symbol):
-    _fallback['last_ts'] = time.time()
+    _fallback['events'].append(time.time())
     _fallback['last_symbol'] = symbol
     _fallback['count'] += 1
 
 
 def pop_fallback_warning(min_gap_hours=6):
-    """Trả message cảnh báo nếu VỪA rớt sang yfinance mà chưa báo trong X giờ.
+    """Trả message cảnh báo nếu fallback DÀY gần đây (sự cố thật) và chưa báo trong X giờ.
 
-    Trả None nếu không có gì mới hoặc đã báo gần đây.
+    Trả None nếu chỉ rớt lẻ tẻ hoặc đã báo gần đây.
     """
-    if _fallback['last_ts'] == 0:
+    now = time.time()
+    recent = sum(1 for t in _fallback['events'] if now - t < FALLBACK_WINDOW_MIN * 60)
+    if recent < FALLBACK_BURST:
+        return None  # rớt vặt — kệ, tự hồi
+    if now - _fallback['last_notified'] < min_gap_hours * 3600:
         return None
-    if _fallback['last_ts'] <= _fallback['last_notified']:
-        return None  # chưa có fallback mới kể từ lần báo trước
-    if time.time() - _fallback['last_notified'] < min_gap_hours * 3600:
-        return None
-    _fallback['last_notified'] = time.time()
-    return (f"⚠️ Data TradingView đang rớt — bot tạm dùng yfinance "
-            f"(lần cuối: {_fallback['last_symbol']}, tổng {_fallback['count']} lần từ lúc khởi động).\n"
+    _fallback['last_notified'] = now
+    return (f"⚠️ Data TradingView rớt LIÊN TỤC — {recent} lần trong {FALLBACK_WINDOW_MIN} phút qua "
+            f"(lần cuối: {_fallback['last_symbol']}). Bot tạm dùng yfinance.\n"
             f"Giá XAU fallback là futures GC=F, có thể lệch ~$20 và delay 15-30 phút. "
             f"Alert trong lúc này sẽ ít/tạm dừng do guard chống trộn nguồn.")
 
@@ -105,27 +111,33 @@ def fetch_symbol(symbol, timeframe="5m", days=7):
     if symbol not in TV_SYMBOLS:
         raise ValueError(f"Symbol {symbol} không hỗ trợ. Dùng: {list(TV_SYMBOLS.keys())}")
 
-    # Try TradingView first (realtime)
+    # Try TradingView first (realtime) — retry 1 lần trước khi bỏ cuộc
+    # (tvDatafeed nologin hay nghẹn vặt 1 phát rồi tự hồi; fallback ngay là quá nhát)
     if TV_AVAILABLE:
-        try:
-            tv_sym, tv_exch = TV_SYMBOLS[symbol]
-            tv_interval = TV_INTERVALS.get(timeframe, Interval.in_5_minute)
-            # n_bars theo timeframe (trước đây *200 luôn → fetch dư ~20 năm daily).
-            bars_per_day = {"1m": 1440, "5m": 288, "15m": 96, "1h": 24, "4h": 6, "1d": 1}.get(timeframe, 288)
-            n_bars = min(days * bars_per_day, 5000)
-            n_bars = max(n_bars, 120)  # đủ nến cho indicators (MA89 cần ≥89)
-            with _tv_lock:  # serialize truy cập websocket dùng chung
-                df = _tv.get_hist(symbol=tv_sym, exchange=tv_exch,
-                                  interval=tv_interval, n_bars=n_bars)
-            if df is not None and not df.empty:
+        tv_sym, tv_exch = TV_SYMBOLS[symbol]
+        tv_interval = TV_INTERVALS.get(timeframe, Interval.in_5_minute)
+        # n_bars theo timeframe (trước đây *200 luôn → fetch dư ~20 năm daily).
+        bars_per_day = {"1m": 1440, "5m": 288, "15m": 96, "1h": 24, "4h": 6, "1d": 1}.get(timeframe, 288)
+        n_bars = min(days * bars_per_day, 5000)
+        n_bars = max(n_bars, 120)  # đủ nến cho indicators (MA89 cần ≥89)
+
+        for attempt in (1, 2):
+            try:
+                with _tv_lock:  # serialize truy cập websocket dùng chung
+                    df = _tv.get_hist(symbol=tv_sym, exchange=tv_exch,
+                                      interval=tv_interval, n_bars=n_bars)
+                if df is None or df.empty:
+                    raise ValueError("TV trả về rỗng")
                 # Rename columns to match yfinance format
-                df = df.rename(columns={
+                return df.rename(columns={
                     'open': 'Open', 'high': 'High', 'low': 'Low',
                     'close': 'Close', 'volume': 'Volume'
                 })
-                return df
-        except Exception as e:
-            print(f"[WARN] TradingView fetch fail {symbol}: {e}, fallback yfinance")
+            except Exception as e:
+                if attempt == 1:
+                    time.sleep(2)  # nghỉ 2s rồi thử lại — đa số blip tự hồi
+                    continue
+                print(f"[WARN] TradingView fetch fail {symbol} (đã retry): {e}, fallback yfinance")
 
     # Fallback yfinance — lưu ý XAU→GC=F / XAG→SI=F là futures có thể delay 15-30 min
     _record_fallback(symbol)
